@@ -1,25 +1,4 @@
-"""The GTK4/libadwaita application: window, navigation and the apply plumbing.
-
-This is the shell. It owns exactly three things every page depends on and
-nothing else:
-
-* ``window.config`` / ``window.caps`` -- the loaded config and the probed
-  machine capabilities, read once and shared, so a page never re-reads the
-  config file behind another page's back.
-* ``window.toast(text)`` -- the single place anything reports success or
-  failure. Pages never own a status label.
-* ``window.apply_async(fn, on_done)`` -- every hardware call goes through
-  here. ``run_helper`` shells out to sudo with a ten second timeout and
-  nvidia-smi takes a couple of hundred milliseconds; either on the main loop
-  freezes the window, and a frozen window during a fan-curve apply is what
-  made the old version feel broken.
-
-The application id must match the desktop entry's filename
-(``org.rogcontrol.RogControl.desktop``). GNOME matches a window to its
-launcher by application id, and when the two disagree the icon in the
-applications grid starts the app but never attaches to the window it
-opened -- which looks exactly like clicking the icon doing nothing at all.
-"""
+"""GTK application shell: navigation, shared state, and hardware scheduling."""
 
 import concurrent.futures
 import json
@@ -39,6 +18,8 @@ from gi.repository import Adw, Gio, GLib, Gtk, Pango  # noqa: E402
 from . import config as config_mod  # noqa: E402
 from . import fancurve  # noqa: E402
 from . import hardware  # noqa: E402
+from .profile_actions import ProfileActions
+from .ui import apply_appearance, icon_image  # noqa: E402
 from .pages.battery import BatteryPage  # noqa: E402
 from .pages.cpu import CpuPage  # noqa: E402
 from .pages.fans import CHANNEL_GAP_S, FansPage  # noqa: E402
@@ -97,16 +78,7 @@ class MainWindow(Adw.ApplicationWindow):
         # would fire an apply for every control on screen.
         self._loading = True
 
-        # The sidebar icons are looked up by name, and the system icon theme
-        # is not guaranteed to have all seven -- Adwaita is missing
-        # speedometer-symbolic and computer-chip-symbolic outright, and a
-        # fresh install may not even have Adwaita active (KDE ships Breeze).
-        # Bundling them here and adding this as a search path means the
-        # sidebar looks the same regardless of what theme the desktop is
-        # running, with the system theme still preferred if it has its own.
-        icon_theme = Gtk.IconTheme.get_for_display(self.get_display())
-        icons_dir = os.path.join(os.path.dirname(__file__), "icons")
-        icon_theme.add_search_path(icons_dir)
+        apply_appearance(self.config)
 
         self.set_title("ROG Control")
         width, height = 960, 720
@@ -152,6 +124,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._worker_pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=1)
 
+        self.profile_actions = ProfileActions(self)
         self.pages = {}
         self._build_ui()
         self._loading = False
@@ -196,7 +169,7 @@ class MainWindow(Adw.ApplicationWindow):
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             box.set_margin_top(6)
             box.set_margin_bottom(6)
-            box.append(Gtk.Image.new_from_icon_name(icon))
+            box.append(icon_image(icon))
             box.append(Gtk.Label(label=label, xalign=0))
             row.set_child(box)
             self.sidebar_list.append(row)
@@ -308,10 +281,10 @@ class MainWindow(Adw.ApplicationWindow):
         360px window, and because these are rare, deliberate acts -- the
         drop-down beside it is the control that gets used every day."""
         for name, handler in (
-                ("new-profile", self._on_new_profile),
-                ("delete-profile", self._on_delete_profile),
-                ("import-profiles", self._on_import_profiles),
-                ("export-profile", self._on_export_profile)):
+                ("new-profile", self.profile_actions._on_new_profile),
+                ("delete-profile", self.profile_actions._on_delete_profile),
+                ("import-profiles", self.profile_actions._on_import_profiles),
+                ("export-profile", self.profile_actions._on_export_profile)):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", handler)
             self.add_action(action)
@@ -329,7 +302,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append_section(None, transfer)
 
         self.profile_menu = Gtk.MenuButton()
-        self.profile_menu.set_icon_name("open-menu-symbolic")
+        self.profile_menu.set_child(icon_image("open-menu-symbolic"))
         self.profile_menu.set_tooltip_text("Manage profiles")
         self.profile_menu.set_menu_model(menu)
         return self.profile_menu
@@ -473,232 +446,6 @@ class MainWindow(Adw.ApplicationWindow):
         finally:
             self._loading = was_loading
 
-    def _on_new_profile(self, _action, _param):
-        current = self.current_profile_name()
-        dialog = Adw.AlertDialog(
-            heading="New profile",
-            body=f"It starts as a copy of “{current}”, so the machine keeps "
-                 f"running exactly as it is now." if current else
-                 "The new profile starts from the stock settings.")
-        entry = Gtk.Entry(placeholder_text="Profile name")
-        # Enter creates, which is the whole interaction for a dialog that is
-        # one text field.
-        entry.set_activates_default(True)
-        dialog.set_extra_child(entry)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("create", "Create")
-        dialog.set_response_appearance("create",
-                                       Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("create")
-        dialog.set_close_response("cancel")
-        # Refused names are refused before the button is pressed rather than
-        # after: an empty or duplicate name is the only way this can fail, and
-        # a greyed-out Create says so without the user losing what they typed.
-        dialog.set_response_enabled("create", False)
-        entry.connect("changed", self._on_new_profile_typed, dialog)
-        dialog.connect("response", self._on_new_profile_response, entry)
-        dialog.present(self)
-
-    def _on_new_profile_typed(self, entry, dialog):
-        error = config_mod.profile_name_error(self.config, entry.get_text())
-        dialog.set_response_enabled("create", error is None)
-        # Red only once there is something to be wrong: an empty field is the
-        # starting state, not a mistake.
-        if error is not None and entry.get_text().strip():
-            entry.add_css_class("error")
-            entry.set_tooltip_text(error)
-        else:
-            entry.remove_css_class("error")
-            entry.set_tooltip_text(None)
-
-    def _on_new_profile_response(self, _dialog, response, entry):
-        if response != "create":
-            return
-        try:
-            name = config_mod.create_profile(self.config, entry.get_text())
-        except ValueError as e:
-            self.toast(str(e))
-            return
-        config_mod.save_config(self.config)
-        self._refresh_profile_list(select=name)
-        self.reload_pages()
-        # No hardware apply: the new profile is a copy of the one already
-        # running, so there is nothing to push, and pushing it would cost
-        # ~20 seconds of fan writes to arrive back where the machine already is.
-        self.toast(f"Profile “{name}” created — a copy of what is running.")
-
-    def _on_delete_profile(self, _action, _param):
-        name = self.current_profile_name()
-        if not name:
-            self.toast("There is no profile to delete.")
-            return
-        if len((self.config.get("profiles") or {})) <= 1:
-            self.toast("This is the only profile left — there has to be one.")
-            return
-        # Named here rather than discovered afterwards: losing an auto-switch
-        # target is a consequence the user should agree to, not find out about
-        # the next time they unplug.
-        also = [source for source, key in config_mod.AUTO_SWITCH_KEYS.items()
-                if self.config.get(key) == name]
-        body = "This cannot be undone."
-        if also:
-            body += (" It is also the profile used on "
-                     + " and ".join(also)
-                     + " power, so that auto-switch will be turned off.")
-        dialog = Adw.AlertDialog(heading=f"Delete “{name}”?", body=body)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("delete", "Delete")
-        dialog.set_response_appearance("delete",
-                                       Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", self._on_delete_response, name)
-        dialog.present(self)
-
-    def _on_delete_response(self, _dialog, response, name):
-        if response != "delete":
-            return
-        was_current = name == self.config.get("current_profile")
-        try:
-            current = config_mod.delete_profile(self.config, name)
-        except ValueError as e:
-            self.toast(str(e))
-            return
-        config_mod.save_config(self.config)
-        self._refresh_profile_list(select=current)
-        self.reload_pages()
-        self.toast(f"Deleted “{name}”.")
-        if was_current:
-            # The machine is still running the settings of a profile that no
-            # longer exists, and current_profile now names a different one.
-            # Leaving those two disagreeing is what the enforcer would spend
-            # the next minute correcting anyway.
-            self.apply_profile_async(current)
-
-    def _on_export_profile(self, _action, _param):
-        # Everything, not the one profile on screen -- this is the backup,
-        # so leaving anything out would make it a worse one than just
-        # copying ~/.config/rogcontrol.json by hand.
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Export Backup")
-        dialog.set_initial_name("rogcontrol-backup.json")
-        dialog.set_filters(self._json_filters())
-        # Gtk.FileDialog, not Gtk.FileChooserDialog: the latter is deprecated
-        # in GTK 4.10 and its .run() needs a nested main loop, which is the
-        # thing this rewrite is built to avoid.
-        dialog.save(self, None, self._on_export_chosen)
-
-    def _on_export_chosen(self, dialog, result):
-        try:
-            file = dialog.save_finish(result)
-        except GLib.Error:
-            return  # dismissed
-        path = file.get_path() if file is not None else None
-        if not path:
-            return
-        payload = config_mod.export_backup(self.config)
-        try:
-            with open(path, "w") as f:
-                json.dump(payload, f, indent=2)
-        except (OSError, TypeError, ValueError) as e:
-            self.toast(f"Export failed: {e}")
-            return
-        self.toast(f"Backed up everything to {os.path.basename(path)}.")
-
-    def _on_import_profiles(self, _action, _param):
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Import")
-        dialog.set_filters(self._json_filters())
-        dialog.open(self, None, self._on_import_chosen)
-
-    def _on_import_chosen(self, dialog, result):
-        try:
-            file = dialog.open_finish(result)
-        except GLib.Error:
-            return  # dismissed
-        path = file.get_path() if file is not None else None
-        if not path:
-            return
-        try:
-            with open(path) as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError, ValueError) as e:
-            self.toast(f"Could not read that file: {e}")
-            return
-        # A full backup replaces everything and cannot be undone, so it
-        # gets a confirmation the same way Delete does. An old-style file
-        # that shares one or a few profiles has no backup marker and merges
-        # in immediately, exactly as it always has -- that path is already
-        # safe by construction (see import_profiles).
-        if config_mod.is_backup_file(data):
-            self._confirm_restore_backup(data)
-            return
-        try:
-            # Validates the whole file before it touches the config: a file
-            # that is half profiles and half junk must change nothing at all.
-            names = config_mod.import_profiles(self.config, data)
-        except ValueError as e:
-            self.toast(f"Could not import: {e}")
-            return
-        config_mod.save_config(self.config)
-        self._refresh_profile_list()
-        self.reload_pages()
-        # Imported, not applied: the file describes power limits and fan
-        # curves for a machine that may not be this one, so it arrives as
-        # something to look at and select, never as something now running.
-        if len(names) == 1:
-            self.toast(f"Imported “{names[0]}” — select it to apply.")
-        else:
-            self.toast(f"Imported {len(names)} profiles — "
-                       f"select one to apply.")
-
-    def _confirm_restore_backup(self, data):
-        profiles = data.get("profiles")
-        count = len(profiles) if isinstance(profiles, dict) else 0
-        body = (f"This replaces every profile and setting you have now "
-                f"with the {count} profile"
-                f"{'s' if count != 1 else ''} and settings in this backup. "
-                f"This cannot be undone.")
-        dialog = Adw.AlertDialog(heading="Restore this backup?", body=body)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("restore", "Restore")
-        dialog.set_response_appearance("restore",
-                                       Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", self._on_restore_response, data)
-        dialog.present(self)
-
-    def _on_restore_response(self, _dialog, response, data):
-        if response != "restore":
-            return
-        try:
-            # Raises before cfg.clear() runs, so a corrupt or truncated
-            # backup leaves the current config untouched rather than
-            # replacing it with half a file.
-            config_mod.restore_backup(self.config, data)
-        except ValueError as e:
-            self.toast(f"Could not restore: {e}")
-            return
-        config_mod.save_config(self.config)
-        self._refresh_profile_list()
-        self.reload_pages()
-        self.toast("Backup restored.")
-
-    @staticmethod
-    def _json_filters():
-        """Profile files first, everything else still reachable -- an export
-        the user renamed is still a perfectly good import."""
-        filters = Gio.ListStore.new(Gtk.FileFilter)
-        profile_filter = Gtk.FileFilter()
-        profile_filter.set_name("Profile files")
-        profile_filter.add_pattern("*.json")
-        filters.append(profile_filter)
-        everything = Gtk.FileFilter()
-        everything.set_name("All files")
-        everything.add_pattern("*")
-        filters.append(everything)
-        return filters
 
     # -- applying a whole profile --------------------------------------------
 

@@ -74,6 +74,8 @@ A switch for the boot chime, remembered so a boot-apply service can restore it a
 *Requires: nothing extra — always available. The asusd conflict check needs asusctl to be present to say anything.*
 
 ### ✨ Also
+- Bundled interface icons that stay consistent when the desktop icon pack changes
+- System, Light, and Dark appearance under **System → Appearance**, saved between launches
 - Live RAM and VRAM use on the overview page
 - A tray icon that shows and switches the active profile (needs `libayatana-appindicator`)
 - Keyboard shortcuts for cycling profiles and lighting modes (bind them yourself — see [1-HOW-TO-INSTALL.txt](rogcontrol/1-HOW-TO-INSTALL.txt))
@@ -181,6 +183,18 @@ The installer does not bind these for you — a hotkey is a personal choice, and
 | `rogcontrol --hide` | Put it away without quitting |
 | `rogcontrol --toggle` | Show/hide depending on current state |
 
+The same shortcut behavior is also available through a single command:
+
+```sh
+rogcontrol profile next
+rogcontrol keyboard next
+rogcontrol keyboard brightness up
+rogcontrol keyboard speed down
+rogcontrol report
+```
+
+The existing script names remain supported for desktop key bindings.
+
 The brightness and speed scripts take one argument, so each needs its own binding for `up` and one for `down` — four bindings, not two. The speed one only does anything on Breathing, Pulse, Color Cycle or Rainbow; on any other mode it's a no-op, since those are a fixed picture with no animation to speed up.
 
 `--show`/`--hide` are two ends of one thing, not a toggle: `--show` always brings the window up, `--hide` always puts it away without quitting — the window stays alive, invisible, so the next `--show` is instant. `--toggle` is what the tray's own "Show window" item uses if you'd rather have one key do either.
@@ -200,6 +214,12 @@ These bindings live in your desktop's own settings (GNOME stores them under dcon
 To try it: open the header menu → **Import**, and pick this file. It has no profiles named the same as the stock ones colliding, they come in as "Name (2)" — your existing profiles, keyboard settings, charge limit and fan calibration are untouched, since Import only merges in the profiles a plain file like this contains. **Still run Calibrate fan RPM on the Fans page** before trusting any of these curves — the RPM numbers on the graph are for the developer's fans, not yours; the shape carries over, the numbers don't. The "Test" profile pushes power limits well past what most chips sustain; treat it as a curiosity, not something to select and forget.
 
 ## 🔄 Updating
+
+In the app, open **System → Check for updates → Check**, then choose **Update**.
+The app shows download progress and opens the installer in a terminal for password
+and dependency prompts. Keep that terminal open until installation finishes.
+The System page reports success or failure; after success, close and reopen ROG
+Control to load the new version. Profiles, settings, and calibration are kept.
 
 Run `./install.sh` from the newer version. It detects the existing install and keeps your profiles, fan curves, calibration and keyboard settings — your settings file is backed up with a date stamp first.
 

@@ -1,31 +1,17 @@
-"""``python3 -m rogcontrol`` entry point.
-
-Flags:
-  --self-test        build every page, refresh each once, exit 0 (non-zero
-                     on any exception). This is the smoke test for the UI.
-  --hardware-report  write hardware.hardware_report_text() to Downloads and
-                     print the path. No window, no hardware writes, exits 0.
-                     See docs/INTEL-SUPPORT-PLAN.txt.
-  --minimized        start with the window built but not shown.
-  --toggle           show the window, or hide it if it is already visible.
-  --quit             close a running window and exit; does nothing if the
-                     app is not running. Used by the tray's Quit item.
-"""
+"""Dispatch headless commands before importing the GTK application."""
 
 import sys
 
-# Handled here, before .app is imported, on purpose: .app pulls in GTK4/
-# libadwaita at module load, and this flag's whole point is to work on a
-# machine where that import might not even succeed -- a headless install, or
-# one still mid-troubleshoot over the reason the window will not start. It
-# needs neither.
-if "--hardware-report" in sys.argv[1:]:
-    from . import hardware
-
-    print(hardware.write_hardware_report())
-    sys.exit(0)
-
-from .app import main
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--hardware-report" in args:
+        from .cli import main as cli_main
+        return cli_main(["report"])
+    if args and args[0] in ("profile", "keyboard", "report", "--help", "-h"):
+        from .cli import main as cli_main
+        return cli_main(args)
+    from .app import main as gui_main
+    return gui_main(["rogcontrol", *args])
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main())

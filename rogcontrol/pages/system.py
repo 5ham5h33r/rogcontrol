@@ -1,50 +1,4 @@
-"""System: asusd, power-mode sync, the boot sound, the log, and detection.
-
-Read-mostly things, and one conflict worth naming.
-
-The graphics mode picker used to live here and is now on the GPU page. It
-belongs there: which card the screen is plugged into is a fact about the
-graphics card, and every control that depends on it -- power limit,
-temperature target, Dynamic Boost -- is on that page already.
-
-The conflict is asusd. It is asusctl's daemon and it drives exactly the same
-hardware as this app: the same asus-wmi platform knobs, the same three custom
-fan curves, the same keyboard lighting. Two programs re-asserting different
-fan curves at the same embedded controller is not a configuration, and the
-fans are where it is audible. So the page says whether asusd is installed and
-what it is doing, and can stop and disable it -- or put it back. What it does
-not do is remove the package: that is a transaction the user should see, so
-the exact command for the detected distro is shown instead.
-
-The sync row exists because this app and the OS both think they own the
-power mode. Selecting a profile sets power-profiles-daemon to match (the
-window's profile switch pushes the mode before anything else, because
-changing it is what wipes the EC's fan curve). GNOME's power menu can set
-it back, and until the enforcer notices, the machine is running one thing
-and reporting another. Rather than hide that, the page names both sides and
-says whether they agree.
-
-What the enforcer then does is adopt, not revert: an externally set mode is
-treated as a request to switch profile, so the disagreement is resolved by
-this app moving to the profile that mode maps to. The row used to tell the
-user to "re-select the profile to push it back", which was never possible
--- selecting the profile that is already current is a no-op in the switcher,
-by design, since it would otherwise cost a full ~20 second re-apply.
-
-The boot sound is here rather than on a tuning page because it is a property
-of the machine and not of how hard it is being driven: the firmware plays it
-before any operating system is running, and switching profile must not change
-it. So it is written straight to the hardware, kept at the top level of the
-config rather than inside a profile, and re-asserted at login by the
-boot-apply service in case a firmware reset has brought the chime back.
-
-Panel overdrive sits beside it on all four of those counts, which is why it
-is here and not on the GPU page. The GPU page is about the discrete card --
-what it is allowed to draw, how hot it may get, which card the screen is
-plugged into -- and overdrive is none of those: it is the panel's own
-response-time setting, written to the same asus-wmi platform device as the
-chime, held in firmware, and no more part of a profile than the chime is.
-"""
+"""System settings, service status, diagnostics, and update controls."""
 
 import time
 
@@ -58,9 +12,13 @@ from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 from .. import APP_VERSION  # noqa: E402
 from .. import config as config_mod  # noqa: E402
 from .. import fancurve  # noqa: E402
+from .. import diagnostics
+from ..update_ui import UpdateController
 from .. import hardware  # noqa: E402
 from ..sampling import SampleFailures  # noqa: E402
 from .. import profiles as profiles_mod  # noqa: E402
+from ..ui import (APPEARANCES, APPEARANCE_LABELS, appearance_index,
+                  apply_appearance)  # noqa: E402
 
 REFRESH_SECONDS = 5
 DASH = "—"
@@ -346,7 +304,7 @@ class SystemPage(Adw.PreferencesPage):
         # True from a Check click (or the app's own launch/daily
         # auto-check) until the answer comes back, so the two cannot race
         # each other into two overlapping GitHub requests.
-        self._update_busy = False
+        self.updates = UpdateController(self)
         self.asusd_state = {}
         # What is in the picker, and separately the last non-empty answer
         # supergfxctl -s gave. The two are deliberately not the same list.
@@ -366,6 +324,7 @@ class SystemPage(Adw.PreferencesPage):
     # -- construction --------------------------------------------------------
 
     def _build(self):
+        self._build_appearance()
         self._build_supergfx()
         self._build_asusd()
         self._build_sync()
@@ -374,6 +333,26 @@ class SystemPage(Adw.PreferencesPage):
         self._build_psr()
         self._build_log()
         self._build_about()
+
+    def _build_appearance(self):
+        group = Adw.PreferencesGroup(title="Appearance")
+        self.appearance_row = Adw.ComboRow(title="Color scheme")
+        self.appearance_row.set_model(
+            Gtk.StringList.new(APPEARANCE_LABELS))
+        self.appearance_row.set_selected(appearance_index(self.window.config))
+        self.appearance_row.connect("notify::selected", self._on_appearance_changed)
+        group.add(self.appearance_row)
+        self.add(group)
+
+    def _on_appearance_changed(self, row, _pspec):
+        if self._loading:
+            return
+        selected = row.get_selected()
+        if selected >= len(APPEARANCES):
+            return
+        self.window.config["appearance"] = APPEARANCES[selected]
+        config_mod.save_config(self.window.config)
+        apply_appearance(self.window.config)
 
     def _build_supergfx(self):
         """Whether the daemon the graphics-mode picker needs is answering.
@@ -663,11 +642,11 @@ class SystemPage(Adw.PreferencesPage):
 
         self.update_row = Adw.ActionRow(title="Check for updates")
         self.update_row.set_subtitle_lines(0)
-        self._set_update_status(f"Running v{APP_VERSION}")
+        self.updates._set_update_status(f"Running v{APP_VERSION}")
         self.update_check_button = Gtk.Button(label="Check")
         self.update_check_button.set_valign(Gtk.Align.CENTER)
         self.update_check_button.connect("clicked",
-                                         self._on_check_update_clicked)
+                                         self.updates._on_check_update_clicked)
         self.update_row.add_suffix(self.update_check_button)
         self.update_row.set_activatable_widget(self.update_check_button)
         group.add(self.update_row)
@@ -755,6 +734,7 @@ class SystemPage(Adw.PreferencesPage):
     # -- refresh -------------------------------------------------------------
 
     def _on_destroy(self, _widget):
+        self.updates.close()
         if self._timer_id is not None:
             GLib.source_remove(self._timer_id)
             self._timer_id = None
@@ -1217,7 +1197,7 @@ class SystemPage(Adw.PreferencesPage):
         # No claim_hardware: this reads sysfs and writes one file of its own,
         # it never touches a control another apply could be mid-write on.
         self.report_button.set_sensitive(False)
-        self.window.apply_async(hardware.write_hardware_report,
+        self.window.apply_async(diagnostics.write_hardware_report,
                                 self._on_report_written)
 
     def _on_report_written(self, path, error):
@@ -1229,99 +1209,9 @@ class SystemPage(Adw.PreferencesPage):
 
     # -- updates ---------------------------------------------------------
 
-    def _set_update_status(self, text):
-        self.update_row.set_subtitle(text)
-
-    def _on_check_update_clicked(self, _button):
-        self.check_for_update()
 
     def check_for_update(self):
-        """Ask GitHub for a newer release. Shared by the button and the
-        app's own launch/daily auto-check (see app.py), so there is exactly
-        one place that decides what "available" means and how the dialog is
-        offered."""
-        if self._update_busy:
-            return
-        self._update_busy = True
-        self.update_check_button.set_sensitive(False)
-        self._set_update_status("Checking…")
-        self.window.apply_async(hardware.check_for_update,
-                                self._on_update_checked)
-
-    def _on_update_checked(self, result, error):
-        self._update_busy = False
-        self.update_check_button.set_sensitive(True)
-        if error is not None:
-            self._set_update_status(f"Could not check for updates: {error}")
-            return
-        if result.get("error"):
-            self._set_update_status(
-                f"Could not check for updates: {result['error']}")
-            return
-        if not result.get("available"):
-            self._set_update_status(f"Up to date (v{APP_VERSION})")
-            return
-        version = result.get("version")
-        download_url = result.get("download_url")
-        if not download_url:
-            # Newer, but this release has nothing this app knows how to
-            # fetch automatically -- see UPDATE_ASSET_PREFIX. Said plainly
-            # rather than offering a button that can only fail.
-            self._set_update_status(
-                f"v{version} available, but no matching download was found "
-                f"on the release page.")
-            return
-        self._set_update_status(f"v{version} available")
-        self._offer_update(version, download_url)
-
-    def _offer_update(self, version, download_url):
-        dialog = Adw.AlertDialog(
-            heading=f"Update to v{version}?",
-            body="This downloads the release and opens a terminal running "
-                "its installer -- the same install.sh you would run by "
-                "hand, so it still asks for your sudo password there. Your "
-                "settings, profiles and fan calibration are kept.")
-        dialog.add_response("later", "Later")
-        dialog.add_response("update", "Update")
-        dialog.set_response_appearance("update",
-                                       Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("update")
-        dialog.set_close_response("later")
-        dialog.connect("response", self._on_update_dialog_response,
-                       version, download_url)
-        dialog.present(self)
-
-    def _on_update_dialog_response(self, _dialog, response, version,
-                                   download_url):
-        if response != "update":
-            return
-        self._set_update_status(f"Downloading v{version}…")
-        # apply_isolated, not apply_async: this is the one hardware call
-        # that reaches an outside server rather than the laptop itself, so
-        # it is the one that can hang on a stalled DNS lookup or a
-        # connection that never completes. Running it on the shared
-        # worker pool would let that hang freeze every other page's live
-        # stats for the rest of the session.
-        self.window.apply_isolated(
-            lambda: hardware.download_and_stage_update(download_url),
-            lambda result, error: self._on_update_staged(
-                version, result, error),
-            timeout=30)
-
-    def _on_update_staged(self, version, install_sh_path, error):
-        if error is not None:
-            self._set_update_status(f"Update failed: {error}")
-            self.window.toast(f"Could not download v{version}: {error}")
-            return
-        ok, message = hardware.launch_update_terminal(install_sh_path)
-        if ok:
-            self._set_update_status(
-                f"Installing v{version} in a terminal window…")
-            self.window.toast("Opened a terminal to install the update -- "
-                              "follow the prompts there.")
-        else:
-            self._set_update_status(f"Could not open a terminal: {message}")
-            self.window.toast(message)
+        self.updates.check_for_update()
 
     def _on_update_auto_changed(self, row, _param):
         if self._loading:
@@ -1615,6 +1505,13 @@ class SystemPage(Adw.PreferencesPage):
         Re-rendered against the last known OS mode rather than re-reading
         it: the profile is what changed, and a subprocess on the main loop
         for every profile switch would make the switch feel slow."""
+        loading = self._loading
+        self._loading = True
+        try:
+            self.appearance_row.set_selected(appearance_index(self.window.config))
+            apply_appearance(self.window.config)
+        finally:
+            self._loading = loading
         mode = self.osmode_value.get_text()
         self._render_sync(None if mode == DASH else mode)
 

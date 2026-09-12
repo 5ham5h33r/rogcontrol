@@ -707,9 +707,9 @@ done
 for sub in pages widgets; do
     install -m 644 "$SCRIPT_DIR/$sub"/*.py "$LIBDIR/$sub/"
 done
-# app.py's sidebar icons -- bundled so the sidebar looks the same regardless
-# of the desktop's icon theme (see the add_search_path call in app.py).
+# UI icons are loaded directly from these files, independent of OS themes.
 install -m 644 "$SCRIPT_DIR"/icons/*.svg "$LIBDIR/icons/"
+install -m 644 "$SCRIPT_DIR/appearance.css" "$LIBDIR/appearance.css"
 say "Application package installed to ~/.local/lib/rogcontrol"
 
 # The launcher. `python3 -m rogcontrol` with ~/.local/lib on the path, which
