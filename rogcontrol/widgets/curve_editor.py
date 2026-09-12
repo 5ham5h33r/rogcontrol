@@ -112,6 +112,8 @@ class CurveEditor(Gtk.DrawingArea):
         self.set_size_request(-1, DEFAULT_HEIGHT)
         self.set_hexpand(True)
         self.set_draw_func(self._draw)
+        Adw.StyleManager.get_default().connect_object(
+            "notify::dark", lambda widget, _pspec: widget.queue_draw(), self)
         self.set_tooltip_text(TOOLTIP)
 
         # Focusable so Tab reaches it, and focus-on-click so that clicking a

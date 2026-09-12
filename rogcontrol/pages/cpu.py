@@ -55,6 +55,7 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 from .. import config as config_mod  # noqa: E402
 from .. import hardware  # noqa: E402
 from ..sampling import SampleFailures  # noqa: E402
+from ..ui import icon_image  # noqa: E402
 from ..widgets.action_buttons import apply_revert_buttons  # noqa: E402
 from ..widgets.slider_row import SliderRow, align_value_widths  # noqa: E402
 from ..widgets.stat_row import StatCell, build_stat_row  # noqa: E402
@@ -588,7 +589,7 @@ class CpuPage(Gtk.Box):
         # Unlimited, or the explanation is ellipsised to one line and says
         # nothing at all.
         row.set_subtitle_lines(0)
-        icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        icon = icon_image("dialog-warning-symbolic")
         icon.set_valign(Gtk.Align.CENTER)
         row.add_prefix(icon)
         group.add(row)
