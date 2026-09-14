@@ -146,8 +146,9 @@ class BatteryPage(Adw.PreferencesPage):
             # The only row "Charging" has -- nothing left in the group.
             self.limit_group.set_visible(False)
 
-        switching = Adw.PreferencesGroup(title="Automatic profile switching",
-                                         description=AUTO_SWITCH_DESCRIPTION)
+        self.switching_group = switching = Adw.PreferencesGroup(
+            title="Automatic profile switching",
+            description=AUTO_SWITCH_DESCRIPTION)
         switching.set_tooltip_text(
             AUTO_SWITCH_DESCRIPTION + " " + AUTO_SWITCH_TOOLTIP)
         self.add(switching)

@@ -266,7 +266,8 @@ class GpuPage(Gtk.Box):
         self.temp_value = self.temp_cell.value
         self.fan_value = self.fan_cell.value
 
-        page.add(self._build_gpu_mode())
+        self.mode_group = self._build_gpu_mode()
+        page.add(self.mode_group)
 
         self.power_group = power = Adw.PreferencesGroup(title="Power")
         page.add(power)
