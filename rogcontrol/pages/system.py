@@ -465,7 +465,7 @@ class SystemPage(Adw.PreferencesPage):
         that cannot reach the hardware is worse than no button."""
         if not self.window.caps.get("fan_curve"):
             return
-        group = Adw.PreferencesGroup(title="Fan boost")
+        self.fan_boost_group = group = Adw.PreferencesGroup(title="Fan boost")
         self.add(group)
         self.fan_boost_row = Adw.ActionRow(title="Fan boost",
                                            subtitle=FAN_BOOST_SUBTITLE)
@@ -514,7 +514,8 @@ class SystemPage(Adw.PreferencesPage):
         make it look like it does too."""
         if not self.caps.get("psr_toggle"):
             return
-        group = Adw.PreferencesGroup(title="Kernel boot options")
+        self.psr_group = group = Adw.PreferencesGroup(
+            title="Kernel boot options")
         self.add(group)
 
         self.psr_row = Adw.SwitchRow(title="AMD panel self-refresh",

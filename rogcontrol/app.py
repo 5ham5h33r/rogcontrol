@@ -26,6 +26,7 @@ from .pages.fans import CHANNEL_GAP_S, FansPage  # noqa: E402
 from .pages.gpu import GpuPage  # noqa: E402
 from .pages.keyboard import KeyboardPage  # noqa: E402
 from .pages.overview import OverviewPage  # noqa: E402
+from .pages.quick_access import QuickAccessPage  # noqa: E402
 from .pages.system import SystemPage, UPDATE_AUTO_INTERVALS_S  # noqa: E402
 from .widgets.ambient import ambient_available  # noqa: E402
 
@@ -44,6 +45,7 @@ MIN_WIDTH, MIN_HEIGHT = 360, 360
 
 # (id, sidebar label, icon). Order is the sidebar order.
 PAGE_SPECS = (
+    ("quick_access", "Quick Access", "speedometer-symbolic"),
     ("overview", "Overview", "speedometer-symbolic"),
     ("cpu", "CPU", "computer-chip-symbolic"),
     ("gpu", "GPU", "video-display-symbolic"),
@@ -208,9 +210,19 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        for page_id, label, _icon in PAGE_SPECS:
+        # Quick Access reuses rows owned by the detailed pages, so build the
+        # sources first and relocate those rows only after every source page
+        # exists. The sidebar and stack still follow PAGE_SPECS order.
+        build_specs = [spec for spec in PAGE_SPECS
+                       if spec[0] != "quick_access"]
+        build_specs.append(next(spec for spec in PAGE_SPECS
+                                if spec[0] == "quick_access"))
+        for page_id, label, _icon in build_specs:
             page = self._build_page(page_id, label)
             self.pages[page_id] = page
+
+        for page_id, label, _icon in PAGE_SPECS:
+            page = self.pages[page_id]
             self.stack.add_named(page, page_id)
             # Pages that have header actions say so with an action_box; the
             # read-only ones (Overview, System) simply do not have one.
@@ -244,7 +256,9 @@ class MainWindow(Adw.ApplicationWindow):
         instead of raising is a bug that ships."""
         builders = {"overview": OverviewPage, "cpu": CpuPage, "gpu": GpuPage,
                     "fans": FansPage, "battery": BatteryPage,
-                    "keyboard": KeyboardPage, "system": SystemPage}
+                    "keyboard": KeyboardPage, "system": SystemPage,
+                    "quick_access": lambda window: QuickAccessPage(
+                        window, self.pages)}
         return builders[page_id](self)
 
     def _build_profile_switcher(self):
