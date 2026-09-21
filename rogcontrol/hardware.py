@@ -1486,11 +1486,11 @@ def nvidia_powermizer_args(mode, target="[gpu:0]"):
 
 
 def nvidia_voltage_boost_args(action, value, pci_bus):
-    """Child-process invocation for the undocumented NVAPI bridge."""
-    args = [sys.executable, "-m", "rogcontrol.nvidia_api", action]
+    """Root-owned NVAPI bridge invocation for one NVIDIA PCI device."""
+    args = ["nvvoltage", action]
     if value is not None:
         args.append(str(int(value)))
-    return args + ["--pci-bus", pci_bus]
+    return helper_command(args + ["--pci-bus", pci_bus])
 
 
 def primary_nvidia_pci_bus(timeout=5):
@@ -1533,9 +1533,17 @@ def _run_nvidia_voltage_boost(action, value=None, timeout=10):
 
 
 def probe_nvidia_voltage_boost(timeout=10):
-    """Current boost percentage, or None when this GPU/driver cannot use it."""
+    """Current boost percentage, only when this GPU/driver accepts writes.
+
+    The rail entry point can expose a readable value while refusing writes.
+    Re-applying the exact current value proves this particular GPU/driver can
+    use the control without changing the user's configured boost.
+    """
     ok, value = _run_nvidia_voltage_boost("read", timeout=timeout)
-    return value if ok else None
+    if not ok:
+        return None
+    applied, readback = _run_nvidia_voltage_boost("set", value, timeout=timeout)
+    return value if applied and readback == value else None
 
 
 def set_nvidia_voltage_boost(value, timeout=10):

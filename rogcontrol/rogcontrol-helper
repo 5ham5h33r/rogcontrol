@@ -81,7 +81,7 @@ find_hwmon_by_name() {
 }
 
 usage() {
-    echo "Usage: rogcontrol-helper <cpu|cpuboost|cpuepp|cpuclock|cpuminclock|cpuppt|cpufwlimits|gpu|nvboost|nvtemp|gpuclocklimit|fan|kbd|kbdrgb|kbdrgb_brightness|charge|bootsound|panelod|psr|asusd_status|asusd_disable|asusd_enable|supergfxd_enable> ..." >&2
+    echo "Usage: rogcontrol-helper <cpu|cpuboost|cpuepp|cpuclock|cpuminclock|cpuppt|cpufwlimits|gpu|nvboost|nvtemp|nvvoltage|gpuclocklimit|fan|kbd|kbdrgb|kbdrgb_brightness|charge|bootsound|panelod|psr|asusd_status|asusd_disable|asusd_enable|supergfxd_enable> ..." >&2
     exit 1
 }
 
@@ -685,6 +685,35 @@ case "$1" in
         [ "$VAL" -ge 75 ] && [ "$VAL" -le 87 ] || { echo "temp target out of range (75-87 C)" >&2; exit 1; }
         [ -w "$NODE" ] || { echo "nv_temp_target not supported on this machine" >&2; exit 1; }
         echo "$VAL" > "$NODE"
+        ;;
+
+    nvvoltage)
+        # NVIDIA's undocumented voltage-rail API accepts writes only from a
+        # privileged process on current drivers.  The bridge is installed
+        # root-owned beside this helper; never import a user-writable copy.
+        shift
+        ACTION="$1"; shift
+        case "$ACTION" in read|set) ;; *)
+            echo "invalid voltage boost action" >&2; exit 1 ;;
+        esac
+        if [ "$ACTION" = set ]; then
+            VAL="$1"; shift
+            is_int "$VAL" || { echo "Invalid voltage boost: $VAL" >&2; exit 1; }
+            [ "$VAL" -ge 0 ] && [ "$VAL" -le 100 ] || {
+                echo "voltage boost out of range (0-100%)" >&2; exit 1; }
+        fi
+        [ "$#" -eq 2 ] && [ "$1" = "--pci-bus" ] || {
+            echo "expected --pci-bus DOMAIN:BUS:DEVICE.FUNCTION" >&2; exit 1; }
+        PCI_BUS="$2"
+        [[ "$PCI_BUS" =~ ^[0-9A-Fa-f]{4,8}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]$ ]] || {
+            echo "invalid PCI bus identifier" >&2; exit 1; }
+        NVAPI_BRIDGE=/usr/local/lib/rogcontrol/nvidia_api.py
+        [ -f "$NVAPI_BRIDGE" ] || {
+            echo "NVIDIA Voltage Boost bridge is not installed" >&2; exit 1; }
+        if [ "$ACTION" = set ]; then
+            exec /usr/bin/python3 "$NVAPI_BRIDGE" set "$VAL" --pci-bus "$PCI_BUS"
+        fi
+        exec /usr/bin/python3 "$NVAPI_BRIDGE" read --pci-bus "$PCI_BUS"
         ;;
 
     gpuclocklimit)

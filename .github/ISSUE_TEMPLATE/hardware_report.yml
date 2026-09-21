@@ -1,0 +1,48 @@
+name: Hardware report (Intel / unsupported CPU)
+description: Send in a hardware report from a laptop this app does not fully support yet
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This app was written on and for an AMD ROG Strix G16 (G614PR). Intel CPU support is new and untested on real Intel hardware -- see [docs/INTEL-SUPPORT-PLAN.txt](https://github.com/D0minatorX/rogcontrol/blob/gtk4-ui/docs/INTEL-SUPPORT-PLAN.txt) -- so this report is how your machine actually gets checked against what the code assumes.
+
+        Getting the report:
+        - Installed already: it was written automatically the first time you opened the app, or run `rogcontrol --hardware-report`, or use the "Save hardware report" button on the System page. The path is printed either way.
+        - App will not install at all: run `bash tools/hardware-report.sh` from a checkout of this repository -- no Python needed.
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Rules
+      options:
+        - label: I made myself familiar with the README and docs/INTEL-SUPPORT-PLAN.txt.
+          required: true
+        - label: I have attached the hardware report .txt file below.
+          required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and model
+      description: Which laptop, and which CPU?
+      placeholder: e.g. ROG Zephyrus G14, Intel Core Ultra 9 275HX
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Hardware report
+      description: Attach the rogcontrol-hardware-report-*.txt file, or paste its contents here.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else worth knowing?
+      description: What works, what doesn't, anything you tried by hand.
+    validations:
+      required: false

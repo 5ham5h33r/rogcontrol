@@ -1538,6 +1538,12 @@ def set_powermizer_mode(mode):
 def set_voltage_boost(percent):
     """Write Voltage Boost and retain a transient driver failure for retry."""
     global _pending_offsets_since, _pending_voltage_boost
+    # Zero is the stock setting, not a driver override.  Do not probe or
+    # queue it: Integrated mode commonly has no NVIDIA driver loaded, and
+    # there is nothing to apply until a non-zero boost is requested.
+    if int(percent) == 0:
+        _pending_voltage_boost = None
+        return True
     ok, message = hardware.set_nvidia_voltage_boost(percent)
     if ok:
         _pending_voltage_boost = None

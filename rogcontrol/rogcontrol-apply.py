@@ -182,11 +182,13 @@ def apply_gpu_clock_offsets(gpu, profile_only=False):
                          _offset_failure_level(message), source="apply",
                          dedupe_key="nvpowermizer")
     if "voltage_boost" in gpu:
-        ok, message = hardware.set_nvidia_voltage_boost(gpu["voltage_boost"])
-        if not ok and message != hardware.NVIDIA_VOLTAGE_BOOST_UNSUPPORTED_MESSAGE:
-            hardware.log(f"GPU Voltage Boost failed: {message}",
-                         _offset_failure_level(message), source="apply",
-                         dedupe_key="nvvoltageboost")
+        # Zero is stock; avoid touching the NVIDIA driver for a no-op.
+        if int(gpu["voltage_boost"]) != 0:
+            ok, message = hardware.set_nvidia_voltage_boost(gpu["voltage_boost"])
+            if not ok and message != hardware.NVIDIA_VOLTAGE_BOOST_UNSUPPORTED_MESSAGE:
+                hardware.log(f"GPU Voltage Boost failed: {message}",
+                             _offset_failure_level(message), source="apply",
+                             dedupe_key="nvvoltageboost")
     if _offset_worth_writing(gpu, "clock_offset", profile_only):
         ok, message = hardware.set_nvidia_clock_offset(
             "core", gpu["clock_offset"], wait_seconds=OFFSET_WAIT_SECONDS)

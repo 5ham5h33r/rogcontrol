@@ -986,7 +986,8 @@ class RogControlApp(Adw.Application):
                 if caps.get("nvidia_settings") else ())
             # The voltage rail interface is an undocumented driver entry
             # point. Probe it in the isolated child before constructing the
-            # page; no row is shown unless this exact GPU accepts a read.
+            # page; no row is shown unless this exact GPU accepts a
+            # privileged read-and-write verification.
             caps["nvidia_voltage_boost"] = (
                 hardware.probe_nvidia_voltage_boost() is not None
                 if caps.get("nvidia") else False)

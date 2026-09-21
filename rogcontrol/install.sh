@@ -71,8 +71,11 @@ esac
 # An atomic host is in the fedora family but has no dnf to run: its packages
 # come from rpm-ostree or from a container. Recorded separately from PM so
 # the DEPS table below still knows which column of package names to read.
+# The presence of a dnf binary is not evidence that the host is mutable:
+# Bazzite may expose dnf for containers while the booted host still requires
+# rpm-ostree.  The ostree marker is authoritative.
 PM_HOST="$PM"
-if [ "$ATOMIC" = 1 ] && ! command -v dnf >/dev/null 2>&1; then PM_HOST=none; fi
+if [ "$ATOMIC" = 1 ]; then PM_HOST=none; fi
 
 # The tray is a StatusNotifierItem. Plasma implements that in the panel
 # itself; GNOME Shell does not, and needs an extension on top of the
@@ -146,12 +149,17 @@ atomic_gui_setup() {
     command -v rpm-ostree >/dev/null 2>&1 \
         || die "rpm-ostree is not installed, so the GUI packages cannot be layered here."
     echo
-    echo "  This is an atomic (rpm-ostree) system: ${OS_NAME:-unknown}"
+    echo "  This is an atomic/ostree system: ${OS_NAME:-unknown}"
     echo "  Its /usr is read-only, so the GUI packages are layered onto the"
     echo "  system with rpm-ostree. This needs a REBOOT before the app can run."
     echo
     step "Layering the GUI packages with rpm-ostree"
-    echo "  This takes a few minutes. Nothing else is interactive."
+    echo "  This takes a few minutes and requires a reboot afterward."
+    echo "  Packages to layer: $GUI_PKGS"
+    read -rp "  Install these with rpm-ostree now? [Y/n] " atomic_answer
+    if [[ "${atomic_answer:-Y}" =~ ^[Nn] ]]; then
+        die "Required GUI packages were not installed. Nothing else has been changed."
+    fi
     # --idempotent so a re-run after a partial install does not fail on
     # the packages that already went in.
     sudo rpm-ostree install --idempotent -y $GUI_PKGS \
@@ -474,7 +482,17 @@ elif [ "$PM_HOST" = none ]; then
     if [ ${#missing_pkgs[@]} -gt 0 ]; then
         case " ${missing_pkgs[*]} " in *" supergfxctl "*) ensure_asus_linux_copr ;; esac
         step "Layering optional packages with rpm-ostree"
+        echo "  This is an atomic/ostree system: ${OS_NAME:-unknown}"
+        echo "  The following missing optional packages will be layered with rpm-ostree:"
         echo "  ${missing_pkgs[*]}"
+        echo "  A reboot is required before layered packages become available."
+        read -rp "  Install them with rpm-ostree now? [Y/n] " atomic_answer
+        if [[ "${atomic_answer:-Y}" =~ ^[Nn] ]]; then
+            warn "Skipped - some features will stay unavailable"
+            missing_pkgs=()
+        fi
+    fi
+    if [ ${#missing_pkgs[@]} -gt 0 ]; then
         if sudo rpm-ostree install --idempotent -y "${missing_pkgs[@]}"; then
             PENDING_REBOOT=1
             say "Layered - they become usable after a reboot"
@@ -615,6 +633,9 @@ fi
 # --------------------------------------------------------------- helper -----
 step "Installing privileged helper"
 sudo install -o root -g root -m 755 "$SCRIPT_DIR/rogcontrol-helper" /usr/local/bin/rogcontrol-helper
+sudo install -d -o root -g root -m 755 /usr/local/lib/rogcontrol
+sudo install -o root -g root -m 644 "$SCRIPT_DIR/nvidia_api.py" \
+    /usr/local/lib/rogcontrol/nvidia_api.py
 say "Helper installed at /usr/local/bin/rogcontrol-helper"
 
 # The app calls the helper through `sudo -n` (non-interactive) from a
@@ -902,19 +923,29 @@ command -v nvidia-smi >/dev/null 2>&1      && f=1 || f=0
 cap "GPU power / clock limit" $f nvidia "nvidia-smi missing"
 command -v nvidia-settings >/dev/null 2>&1 && f=1 || f=0
 cap "GPU clock offsets" $f nvidia_settings "nvidia-settings missing"
-# This is deliberately a read-only probe in its own Python process. The
-# undocumented NVAPI rail interface is not related to nvidia-settings, and
-# the child boundary means an incompatible driver cannot affect install.sh.
+# The undocumented NVAPI rail interface is not related to nvidia-settings.
+# A readable rail can still reject writes, so re-apply the current value via
+# the root-owned bridge. This verifies support without altering the user's
+# boost setting.
 f=0
 if command -v nvidia-smi >/dev/null 2>&1; then
     # sed reads the complete output, unlike head which can make nvidia-smi
     # fail with SIGPIPE under this script's `set -o pipefail` on multi-GPU
     # systems.
     pci_bus="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null | sed -n '1p')"
-    if [ -n "$pci_bus" ] && PYTHONPATH="$LIBDIR${PYTHONPATH:+:$PYTHONPATH}" \
-        python3 -m rogcontrol.nvidia_api read --pci-bus "$pci_bus" 2>/dev/null \
-        | grep -q '"ok": true'; then
-        f=1
+    if [ -n "$pci_bus" ]; then
+        voltage_answer="$(sudo -n /usr/local/bin/rogcontrol-helper nvvoltage read \
+            --pci-bus "$pci_bus" 2>/dev/null)"
+        voltage_value="$(printf '%s' "$voltage_answer" \
+            | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p')"
+        case "$voltage_value" in
+            ''|*[!0-9]*) ;;
+            *) if sudo -n /usr/local/bin/rogcontrol-helper nvvoltage set \
+                    "$voltage_value" --pci-bus "$pci_bus" 2>/dev/null \
+                    | grep -q '"ok": true'; then
+                   f=1
+               fi ;;
+        esac
     fi
 fi
 cap "GPU Voltage Boost (experimental)" $f nvidia_voltage_boost \

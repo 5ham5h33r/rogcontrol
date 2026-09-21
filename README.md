@@ -92,7 +92,7 @@ Fedora (traditional)  sudo dnf install gtk4 libadwaita python3-gobject
 Debian/Ubuntu         sudo apt install libgtk-4-1 libadwaita-1-0 python3-gi
 ```
 
-**On Bazzite or any other atomic/ostree Fedora system, don't run that Fedora line by hand** — there is no `dnf` there and it will fail with "command not found". Just run `./install.sh`; it detects the atomic system and layers these with `rpm-ostree` itself (see the Bazzite section below).
+**On Bazzite or any other atomic/ostree Fedora system, don't run that Fedora line by hand** — the host must use `rpm-ostree`, even if a `dnf` command is available for containers. Just run `./install.sh`; it detects the atomic system, tells you which packages will be layered, asks for confirmation, and uses `rpm-ostree` itself (see the Bazzite section below).
 
 **Optional**, each only costing the feature that needs it — the installer detects what's missing and offers to install it:
 
@@ -124,9 +124,9 @@ One command on every supported distro. The installer reads `/etc/os-release`, so
 
 ### On Bazzite and other atomic systems
 
-Fedora Atomic images (Bazzite, Silverblue, Kinoite — GNOME and KDE Plasma spins alike) have a read-only `/usr` and no `dnf`, so packages can't simply be installed the normal way. The installer handles all of this itself, automatically:
+Fedora Atomic images (Bazzite, Silverblue, Kinoite — GNOME and KDE Plasma spins alike) have a read-only `/usr`, so packages can't simply be installed the normal way. Even when `dnf` is present for container use, the host package path is `rpm-ostree`. The installer handles all of this itself:
 
-- **GTK4/libadwaita** (required) are layered onto the system with `rpm-ostree`, then it tells you to reboot and run `./install.sh` once more — the second run finishes automatically and asks nothing.
+- **GTK4/libadwaita** (required) are listed clearly and, after confirmation, layered onto the system with `rpm-ostree`; then it tells you to reboot and run `./install.sh` once more — the second run finishes automatically.
 - **supergfxctl** (optional, GPU mode switching) isn't in Fedora's own repos at all — the installer adds the `lukenukem/asus-linux` COPR itself before layering it, so you don't have to find or add that repo by hand.
 - **power-profiles-daemon** (optional, OS power-mode sync) is skipped automatically if Bazzite's `tuned-ppd` is already on the system — the two packages conflict (both provide the same service), and the app already talks to `tuned-ppd` just as well, so there's nothing to install or resolve yourself.
 
