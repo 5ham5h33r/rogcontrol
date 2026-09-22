@@ -550,16 +550,16 @@ class GpuPage(Gtk.Box):
         # hybrid machine that is both the wrong reading -- the card is never
         # seen idle -- and a real cost in battery.
         suspended = hardware.dgpu_is_suspended()
+        mode, modes = (hardware.read_cardwire_status()
+                       if self.caps.get("cardwire") else (None, []))
         return {
             "dgpu_suspended": suspended,
             "nvidia": (hardware.read_nvidia_stats()
                        if self.caps.get("nvidia") and not suspended
                        else (None, None)),
             "fan_rpm": hardware.read_fan_rpms().get(FAN_CHANNEL),
-            "mode": (hardware.read_gpu_mode()
-                     if self.caps.get("cardwire") else None),
-            "modes": (hardware.read_supported_gpu_modes()
-                      if self.caps.get("cardwire") else []),
+            "mode": mode,
+            "modes": modes,
         }
 
     def _on_sample(self, result, error):

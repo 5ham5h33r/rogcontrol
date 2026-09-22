@@ -25,17 +25,16 @@ class CardwireTests(unittest.TestCase):
         )
 
     @mock.patch("rogcontrol.hardware.subprocess.run")
-    def test_read_mode_and_available_modes_use_cardwire_get(self, run):
+    def test_read_status_uses_one_cardwire_get(self, run):
         run.return_value = subprocess.CompletedProcess(
             ["cardwire", "get"], 0, stdout=CARDWIRE_GET, stderr="")
 
-        self.assertEqual(hardware.read_gpu_mode(), "Smart")
         self.assertEqual(
-            hardware.read_supported_gpu_modes(),
-            ["Integrated", "Hybrid", "Smart"],
+            hardware.read_cardwire_status(),
+            ("Smart", ["Integrated", "Hybrid", "Smart"]),
         )
-        for call in run.call_args_list:
-            self.assertEqual(call.args[0], ["cardwire", "get"])
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["cardwire", "get"])
 
     @mock.patch("rogcontrol.hardware.subprocess.run")
     def test_set_mode_uses_lowercase_cardwire_cli_value(self, run):
@@ -50,11 +49,28 @@ class CardwireTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0],
                          ["cardwire", "set", "integrated"])
 
-    def test_mode_choices_include_smart_and_advertised_extras(self):
+    def test_mode_choices_hide_unconfigured_manual_mode(self):
         self.assertEqual(
             hardware.gpu_mode_choices("Manual", ["Hybrid", "Manual"]),
             ["Integrated", "Hybrid", "Smart", "Manual"],
         )
+        self.assertEqual(
+            hardware.gpu_mode_choices("Hybrid", ["Hybrid", "Manual"]),
+            ["Integrated", "Hybrid", "Smart"],
+        )
+
+    @mock.patch("rogcontrol.hardware.nvidia_driver_loaded", return_value=True)
+    @mock.patch("rogcontrol.hardware.read_gpu_mode", return_value="Smart")
+    def test_smart_mode_is_reported_as_cardwire_blocked(self, _mode, _driver):
+        self.assertEqual(hardware.nvidia_access_error(),
+                         hardware.CARDWIRE_BLOCKED_MESSAGE)
+        self.assertFalse(hardware.dgpu_available())
+
+    @mock.patch("rogcontrol.hardware.nvidia_driver_loaded", return_value=False)
+    @mock.patch("rogcontrol.hardware.read_gpu_mode", return_value="Hybrid")
+    def test_hybrid_still_requires_the_driver(self, _mode, _driver):
+        self.assertEqual(hardware.nvidia_access_error(),
+                         hardware.NO_DRIVER_MESSAGE)
 
 
 if __name__ == "__main__":

@@ -1061,6 +1061,8 @@ def read_nvidia_query(fields, timeout=5):
     than an exception, since a laptop with the dGPU asleep is a normal state
     and not a reason for the overview to stop updating."""
     blanks = tuple(None for _ in fields)
+    if not dgpu_available(timeout):
+        return blanks
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=" + ",".join(fields),
@@ -1342,6 +1344,8 @@ def detect_gpu_limits(timeout=5):
     back independently -- a driver that answers the CSV query but not the
     CLOCK dump still gets its true wattage range."""
     limits = default_gpu_limits()
+    if not dgpu_available(timeout):
+        return limits
     try:
         result = subprocess.run(
             ["nvidia-smi",
@@ -1367,6 +1371,8 @@ def detect_gpu_max_clock(timeout=5):
     Separate from detect_gpu_limits because the difference between "the card
     says 2100" and "the card did not answer" is exactly what that one throws
     away by falling back, and gpu_clock_limit_max needs it."""
+    if not dgpu_available(timeout):
+        return None
     try:
         result = subprocess.run(["nvidia-smi", "-q", "-d", "CLOCK"],
                                 capture_output=True, text=True, timeout=timeout)
@@ -1495,6 +1501,8 @@ def nvidia_voltage_boost_args(action, value, pci_bus):
 
 def primary_nvidia_pci_bus(timeout=5):
     """The primary NVIDIA PCI address, or None when the driver cannot say."""
+    if not dgpu_available(timeout):
+        return None
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=pci.bus_id", "--format=csv,noheader"],
@@ -1508,8 +1516,9 @@ def primary_nvidia_pci_bus(timeout=5):
 
 
 def _run_nvidia_voltage_boost(action, value=None, timeout=10):
-    if not nvidia_driver_loaded():
-        return False, NO_DRIVER_MESSAGE
+    access_error = nvidia_access_error(timeout=timeout)
+    if access_error:
+        return False, access_error
     pci_bus = primary_nvidia_pci_bus(timeout)
     if not pci_bus:
         return False, NVIDIA_VOLTAGE_BOOST_UNSUPPORTED_MESSAGE
@@ -1596,6 +1605,14 @@ NO_DISPLAY_MESSAGE = ("no graphical session yet -- nvidia-settings needs "
 # offset is work to do when it comes back rather than a fault to report.
 NO_DRIVER_MESSAGE = ("nvidia driver not loaded -- the card is powered down "
                      "or a graphics-mode switch has not finished")
+
+# Cardwire can deliberately deny new NVIDIA clients while leaving the kernel
+# module loaded.  Keep that state distinct from a missing driver: callers can
+# defer profile settings until Hybrid mode returns instead of reporting a
+# hardware failure that did not occur.
+CARDWIRE_BLOCKED_MESSAGE = (
+    "Cardwire is blocking NVIDIA access in the current GPU mode -- switch "
+    "to Hybrid to apply NVIDIA settings")
 
 # Processes whose environment is worth trusting first when harvesting a
 # display below: each one IS the graphical session (or is started by it), so
@@ -1714,8 +1731,9 @@ def session_display_ready():
 
 def _nvidia_settings_session(wait_seconds=0):
     """Return an nvidia-settings-ready environment or its user-facing error."""
-    if not nvidia_driver_loaded():
-        return None, NO_DRIVER_MESSAGE
+    access_error = nvidia_access_error()
+    if access_error:
+        return None, access_error
     env = session_display_env()
     deadline = time.monotonic() + wait_seconds
     while not env.get("DISPLAY") and time.monotonic() < deadline:
@@ -2099,15 +2117,21 @@ GPU_MODES = ("Integrated", "Hybrid", "Smart")
 
 
 def gpu_mode_choices(active=None, supported=()):
-    """Every mode to offer: the three above, plus anything else in play.
+    """Modes this high-level picker can configure.
 
-    Anything Cardwire reports beyond the normal laptop modes is preserved,
-    and so is the active mode, so the picker never lies about current state.
+    Manual needs per-GPU allow/block controls that the application does not
+    expose yet, so advertising it here would let users enter a mode they
+    cannot configure.  Preserve it only when it is already active, allowing
+    the picker to report the truth and switch back to a managed mode.
     """
     modes = list(GPU_MODES)
-    for extra in list(supported or ()) + [active]:
+    for extra in supported or ():
+        if extra == "Manual":
+            continue
         if extra and extra not in modes:
             modes.append(extra)
+    if active and active not in modes:
+        modes.append(active)
     return modes
 
 
@@ -2127,7 +2151,8 @@ def parse_cardwire_status(text):
     return current, available
 
 
-def _read_cardwire_status(timeout=5):
+def read_cardwire_status(timeout=5):
+    """Return Cardwire's current and available modes with one CLI call."""
     try:
         result = subprocess.run(["cardwire", "get"],
                                 capture_output=True, text=True, timeout=timeout)
@@ -2140,7 +2165,7 @@ def _read_cardwire_status(timeout=5):
 
 def read_gpu_mode(timeout=5):
     """The graphics mode currently enforced by Cardwire, or None."""
-    return _read_cardwire_status(timeout)[0]
+    return read_cardwire_status(timeout)[0]
 
 
 # The kernel's own answer to "is there a GPU the nvidia driver can talk to".
@@ -2160,20 +2185,32 @@ def nvidia_driver_loaded(root=None):
         return False
 
 
-def dgpu_available(timeout=5):
+def nvidia_access_error(timeout=5, root=None):
+    """Why NVIDIA clients cannot run now, or ``None`` when they can.
+
+    Cardwire's policy is checked before the kernel module because Smart and
+    Integrated may intentionally retain a loaded driver while refusing new
+    clients.  That is a deferred policy state, not a driver failure.
+    """
+    if read_gpu_mode(timeout) in ("Integrated", "Smart"):
+        return CARDWIRE_BLOCKED_MESSAGE
+    if not nvidia_driver_loaded(root=root):
+        return NO_DRIVER_MESSAGE
+    return None
+
+
+def dgpu_available(timeout=5, root=None):
     """Whether profile writes can reach the dGPU safely.
 
     Integrated and Smart deliberately block ordinary dGPU access, so profile
     writes are deferred in both modes. Hybrid still requires a live NVIDIA
     driver and a bound card; a mode label alone is not enough."""
-    if read_gpu_mode(timeout) in ("Integrated", "Smart"):
-        return False
-    return nvidia_driver_loaded()
+    return nvidia_access_error(timeout=timeout, root=root) is None
 
 
 def read_supported_gpu_modes(timeout=5):
     """The modes this machine can actually be switched to, or []."""
-    return _read_cardwire_status(timeout)[1]
+    return read_cardwire_status(timeout)[1]
 
 
 def _run_reboot(extra_args, timeout=10):
