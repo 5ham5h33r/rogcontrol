@@ -172,6 +172,10 @@ class QuickAccessPage(Adw.PreferencesPage):
             self.window.toast("GPU PowerMizer mode applied.")
             return
         self._restore_powermizer_selection()
+        if message == hardware.CARDWIRE_BLOCKED_MESSAGE:
+            self.window.toast("GPU PowerMizer deferred — switch to Hybrid "
+                              "mode to change it.")
+            return
         self.window.toast(f"GPU PowerMizer mode failed: {message}")
 
     def _move_profile_controls(self):

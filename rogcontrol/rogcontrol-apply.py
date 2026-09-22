@@ -161,6 +161,7 @@ def _offset_failure_level(message):
     return ("INFO"
             if message in (hardware.NO_DISPLAY_MESSAGE,
                            hardware.NO_DRIVER_MESSAGE,
+                           hardware.CARDWIRE_BLOCKED_MESSAGE,
                            hardware.NVIDIA_POWERMIZER_QUERY_MESSAGE)
             else "ERROR")
 

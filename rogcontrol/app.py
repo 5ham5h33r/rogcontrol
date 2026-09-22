@@ -501,6 +501,7 @@ class MainWindow(Adw.ApplicationWindow):
           takes ``scaling_max_freq`` back to hardware maximum with it. A cap
           written first is silently undone."""
         failures = []
+        gpu_deferred = None
 
         def step(text):
             GLib.idle_add(self._set_apply_banner, text)
@@ -546,10 +547,25 @@ class MainWindow(Adw.ApplicationWindow):
         gpu = profile.get("gpu") or {}
         if gpu:
             step("Applying the GPU settings…")
-            if "watts" in gpu and self.caps.get("nvidia"):
+            # Cardwire intentionally blocks new NVIDIA clients in Smart and
+            # Integrated modes while the rest of a profile remains entirely
+            # applicable.  Ask once for this apply and skip only the controls
+            # that need direct NVIDIA access; the ASUS firmware controls
+            # below (Dynamic Boost and temperature target) still work.
+            nvidia_keys = {
+                "watts", "clock_limit", "voltage_boost",
+                "powermizer_mode", "clock_offset", "mem_clock_offset",
+            }
+            needs_nvidia = any(key in gpu for key in nvidia_keys)
+            nvidia_access = (hardware.nvidia_access_error()
+                             if needs_nvidia else None)
+            gpu_deferred = nvidia_access
+            if ("watts" in gpu and self.caps.get("nvidia")
+                    and not nvidia_access):
                 do("GPU power limit",
                    lambda: hardware.run_helper("gpu", gpu["watts"]))
-            if "clock_limit" in gpu and self.caps.get("nvidia"):
+            if ("clock_limit" in gpu and self.caps.get("nvidia")
+                    and not nvidia_access):
                 arg = hardware.gpu_clock_limit_arg(
                     gpu["clock_limit"],
                     (self.caps.get("gpu_limits")
@@ -563,16 +579,18 @@ class MainWindow(Adw.ApplicationWindow):
                 do("GPU temperature target",
                    lambda: hardware.run_helper("nvtemp", gpu["temp_target"]))
             if ("voltage_boost" in gpu
-                    and self.caps.get("nvidia_voltage_boost")):
+                    and self.caps.get("nvidia_voltage_boost")
+                    and not nvidia_access):
                 do("GPU Voltage Boost",
                    lambda: hardware.set_nvidia_voltage_boost(
                        gpu["voltage_boost"]))
             if ("powermizer_mode" in gpu
-                    and self.caps.get("nvidia_powermizer_modes")):
+                    and self.caps.get("nvidia_powermizer_modes")
+                    and not nvidia_access):
                 do("GPU PowerMizer mode",
                    lambda: hardware.set_nvidia_powermizer_mode(
                        gpu["powermizer_mode"]))
-            if self.caps.get("nvidia_settings"):
+            if self.caps.get("nvidia_settings") and not nvidia_access:
                 if "clock_offset" in gpu:
                     do("GPU core clock offset",
                        lambda: hardware.set_nvidia_clock_offset(
@@ -621,16 +639,25 @@ class MainWindow(Adw.ApplicationWindow):
                      f"{len(channels)})…")
                 flat = fancurve.curve_to_flat(fans[channel], 8)
                 do(label, lambda: hardware.run_helper("fan", channel, *flat))
-        return failures
+        return failures, gpu_deferred
 
-    def _on_profile_applied(self, name, failures, error):
+    def _on_profile_applied(self, name, result, error):
         self.release_hardware()
         self.apply_banner.set_revealed(False)
         if error is not None:
             self.toast(f"Applying {name} failed: {error}")
             return
+        failures, gpu_deferred = result
+        deferred_text = (
+            "NVIDIA tuning deferred until Hybrid mode"
+            if gpu_deferred == hardware.CARDWIRE_BLOCKED_MESSAGE
+            else "NVIDIA tuning deferred until GPU access returns")
         if failures:
-            self.toast(f"{name} applied, except — " + "; ".join(failures))
+            suffix = f"; {deferred_text}" if gpu_deferred else ""
+            self.toast(f"{name} applied, except — " + "; ".join(failures)
+                       + suffix)
+        elif gpu_deferred:
+            self.toast(f"{name} applied — {deferred_text}.")
         else:
             self.toast(f"Profile: {name} — applied.")
         # The fan page's banner decides from the driver's cached points, and
