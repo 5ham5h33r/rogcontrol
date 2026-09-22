@@ -87,7 +87,7 @@ class QuickAccessPage(Adw.PreferencesPage):
             self._move(cpu.rows.get("boost"), self.performance_group)
 
         gpu = self.pages.get("gpu")
-        if self.window.caps.get("supergfxctl") and gpu is not None:
+        if self.window.caps.get("cardwire") and gpu is not None:
             for name in ("mode_blocked_row", "mode_row", "mode_answer_row"):
                 self._move(getattr(gpu, name, None), self.performance_group)
             group = getattr(gpu, "mode_group", None)
