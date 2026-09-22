@@ -23,7 +23,7 @@ from . import APP_VERSION
 # the sudo password install.sh's own steps ask for, which is why this never
 # tries to run install.sh directly.
 
-GITHUB_REPO = "D0minatorX/rogcontrol"
+GITHUB_REPO = "5ham5h33r/rogcontrol"
 GITHUB_LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest")
 # The naming convention every release asset has followed so far (see the

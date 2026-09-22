@@ -418,7 +418,7 @@ def parse_service_state(unit_files="", is_active="", is_enabled="",
     """What a systemd unit is doing, from three systemctl answers plus PATH.
 
     Pure, so the states can be tested without a machine that has the package
-    on it. Shared by asusd and supergfxd rather than written twice: the
+    on it. Shared by asusd and cardwired rather than written twice: the
     question ("installed? running? will it come back at boot?") and all four
     answers are the same for both, and the only difference is the unit name.
 
@@ -1057,7 +1057,7 @@ def read_nvidia_query(fields, timeout=5):
     One nvidia-smi call per group of fields, because each invocation costs a
     couple of hundred milliseconds and the callers run on a 2-second timer.
     Every failure mode -- no driver, no binary, card powered down under
-    supergfxctl, '[N/A]' where a number should be -- lands on None rather
+    cardwire, '[N/A]' where a number should be -- lands on None rather
     than an exception, since a laptop with the dGPU asleep is a normal state
     and not a reason for the overview to stop updating."""
     blanks = tuple(None for _ in fields)
@@ -2050,23 +2050,13 @@ def read_panel_od(root=None):
     return val if val in (0, 1) else None
 
 
-# -- Graphics mode (supergfxctl) ---------------------------------------------
+# -- Graphics mode (Cardwire) ------------------------------------------------
 
-SUPERGFXD_SERVICE = "supergfxd.service"
+CARDWIRED_SERVICE = "cardwired.service"
 
 
-def read_supergfxd_state(timeout=5):
-    """What supergfxd is doing, in the same shape as read_asusd_state.
-
-    The difference from the asusd version is what it is FOR. asusd is a
-    daemon this app would rather was not running; supergfxd is one it needs,
-    so the interesting state here is "installed but not running" -- which is
-    what the package leaves behind on a distribution that ships the unit
-    without enabling it, and which looked from the window like the daemon
-    was simply broken.
-
-    Nothing here needs root and nothing here writes: three read-only queries
-    plus a PATH lookup."""
+def read_cardwired_state(timeout=5):
+    """What cardwired is doing, in the same shape as read_asusd_state."""
     def ask(*args):
         try:
             result = subprocess.run(["systemctl", *args],
@@ -2080,49 +2070,39 @@ def read_supergfxd_state(timeout=5):
         return result.stdout or ""
 
     return parse_service_state(
-        unit_files=ask("list-unit-files", SUPERGFXD_SERVICE),
-        is_active=ask("is-active", SUPERGFXD_SERVICE),
-        is_enabled=ask("is-enabled", SUPERGFXD_SERVICE),
-        binary_found=have_cmd("supergfxd") or have_cmd("supergfxctl"),
-        service=SUPERGFXD_SERVICE)
+        unit_files=ask("list-unit-files", CARDWIRED_SERVICE),
+        is_active=ask("is-active", CARDWIRED_SERVICE),
+        is_enabled=ask("is-enabled", CARDWIRED_SERVICE),
+        binary_found=have_cmd("cardwired") or have_cmd("cardwire"),
+        service=CARDWIRED_SERVICE)
 
 
-def set_supergfxd_running(timeout=30):
-    """Enable and start supergfxd, returning ``(ok, message)``.
+def set_cardwired_running(timeout=30):
+    """Enable and start cardwired, returning ``(ok, message)``.
 
     Through the privileged helper, which takes no argument and names the
     unit itself -- there is no route from here to systemctl with a unit name
     of anyone's choosing.
 
-    There is deliberately no "stop supergfxd" counterpart. This app wants
-    that daemon running: without it the graphics-mode picker cannot read or
+    There is deliberately no "stop cardwired" counterpart. This app wants
+    that daemon running: without it the GPU access picker cannot read or
     switch anything. Turning it off is not something the window should offer
     a button for, and a disable primitive in a passwordless helper is worth
     not having."""
-    return run_helper("supergfxd_enable", timeout=timeout)
+    return run_helper("cardwired_enable", timeout=timeout)
 
 
-# The three modes this app offers, always, in the order a user thinks about
-# them: least power, both, most power. Same list the GTK3 app had.
-GPU_MODES = ("Integrated", "Hybrid", "AsusMuxDgpu")
+# Cardwire's useful laptop modes: lowest power, unrestricted offload, and
+# per-application access. Manual is appended when the daemon advertises it,
+# but is not a useful default for this high-level picker.
+GPU_MODES = ("Integrated", "Hybrid", "Smart")
 
 
 def gpu_mode_choices(active=None, supported=()):
     """Every mode to offer: the three above, plus anything else in play.
 
-    ``supergfxctl -s`` deliberately does **not** filter this. It answers
-    "what will the daemon accept in the state it is in right now", and on a
-    laptop whose hardware MUX is set to the discrete GPU that answer is the
-    single mode it is already in -- so filtering by it leaves a picker with
-    nothing in it but the current mode, which is how the ability to switch
-    went missing. What the daemon lists is shown to the user as information
-    beside the picker; a mode it will not take comes back refused, in its own
-    words, which is a better answer than an empty list.
-
-    Anything ``-s`` reports that is not one of the three is added rather than
-    dropped -- Vfio, AsusEgpu, NvidiaNoModeset are real modes on the machines
-    that have them -- and so is the mode actually in force, which must always
-    be selectable or the picker would show some other mode as current.
+    Anything Cardwire reports beyond the normal laptop modes is preserved,
+    and so is the active mode, so the picker never lies about current state.
     """
     modes = list(GPU_MODES)
     for extra in list(supported or ()) + [active]:
@@ -2131,25 +2111,36 @@ def gpu_mode_choices(active=None, supported=()):
     return modes
 
 
-def parse_supergfx_modes(text):
-    """The mode list out of ``supergfxctl -s``: ``[Integrated, Hybrid]``."""
-    text = (text or "").strip()
-    if not text:
-        return []
-    return [part.strip() for part in text.strip("[]").split(",")
-            if part.strip()]
+def parse_cardwire_status(text):
+    """Return ``(current, available)`` from ``cardwire get`` output."""
+    current = None
+    available = []
+    for line in (text or "").splitlines():
+        label, separator, value = line.partition(":")
+        if not separator:
+            continue
+        if label.strip().lower() == "current mode":
+            current = value.strip().title() or None
+        elif label.strip().lower() in ("available mode", "available modes"):
+            available = [part.strip().title() for part in value.split(",")
+                         if part.strip()]
+    return current, available
+
+
+def _read_cardwire_status(timeout=5):
+    try:
+        result = subprocess.run(["cardwire", "get"],
+                                capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return None, []
+    if result.returncode != 0:
+        return None, []
+    return parse_cardwire_status(result.stdout)
 
 
 def read_gpu_mode(timeout=5):
-    """The graphics mode in force, as supergfxctl spells it, or None."""
-    try:
-        result = subprocess.run(["supergfxctl", "-g"],
-                                capture_output=True, text=True, timeout=timeout)
-    except Exception:
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
+    """The graphics mode currently enforced by Cardwire, or None."""
+    return _read_cardwire_status(timeout)[0]
 
 
 # The kernel's own answer to "is there a GPU the nvidia driver can talk to".
@@ -2170,187 +2161,19 @@ def nvidia_driver_loaded(root=None):
 
 
 def dgpu_available(timeout=5):
-    """Whether a GPU write can land: not Integrated, and driver actually up.
+    """Whether profile writes can reach the dGPU safely.
 
-    The mode question alone is not enough, and 2026-09-04 is why. supergfxd
-    reports the mode it has ACCEPTED, not the one in force: asked for
-    AsusMuxDgpu at 20:22 with the reboot still pending, `supergfxctl -g`
-    answered AsusMuxDgpu immediately while the machine went on running
-    Integrated with the nvidia module unloaded and the card off the PCI bus.
-    This returned True for that, and the apply and the enforcer between them
-    put eight ERROR lines in the log writing to a driver that was not there.
-    The same gap opens at boot, where the login apply can beat supergfxd to
-    the point of answering at all.
-
-    So the daemon is asked what it intends and the kernel is asked what is
-    actually loaded, and both have to agree before anything is written."""
-    if read_gpu_mode(timeout) == "Integrated":
+    Integrated and Smart deliberately block ordinary dGPU access, so profile
+    writes are deferred in both modes. Hybrid still requires a live NVIDIA
+    driver and a bound card; a mode label alone is not enough."""
+    if read_gpu_mode(timeout) in ("Integrated", "Smart"):
         return False
     return nvidia_driver_loaded()
 
 
 def read_supported_gpu_modes(timeout=5):
     """The modes this machine can actually be switched to, or []."""
-    try:
-        result = subprocess.run(["supergfxctl", "-s"],
-                                capture_output=True, text=True, timeout=timeout)
-    except Exception:
-        return []
-    if result.returncode != 0:
-        return []
-    return parse_supergfx_modes(result.stdout)
-
-
-# What supergfxd wants the user to do before the mode it has accepted is
-# actually in force. Normalised to these three, because the daemon's own
-# wording has changed between releases ("Logout", "logout required",
-# "No action required") and the page branches on it.
-PENDING_REBOOT, PENDING_LOGOUT, PENDING_NONE = "reboot", "logout", "none"
-
-
-def parse_pending_action(text):
-    """supergfxd's pending-action string as one of the three above, or None.
-
-    None means it could not be told -- an unknown word, an empty answer, a
-    daemon that did not reply -- and the caller falls back to deciding for
-    itself. Anything containing "reboot" wins over "logout": the two never
-    appear together, but a reboot instruction acted on as a logout leaves the
-    user in the loop this whole function exists to end."""
-    low = (text or "").strip().lower()
-    if not low:
-        return None
-    if "reboot" in low:
-        return PENDING_REBOOT
-    if "logout" in low or "log out" in low:
-        return PENDING_LOGOUT
-    if "no action" in low or low in ("none", "nothing"):
-        return PENDING_NONE
-    return None
-
-
-SUPERGFXD_CONF_PATH = "/etc/supergfxd.conf"
-
-
-def supergfxd_always_reboot(root=None):
-    """True when supergfxd applies EVERY mode change at the next boot.
-
-    None when the file is missing or unreadable. World-readable JSON, so this
-    is a file read and not another subprocess.
-
-    Read directly rather than inferred from the pending action, because the
-    pending action is a race: supergfxd answers the D-Bus switch call the
-    moment it accepts, and `supergfxctl -p` goes on saying "No action
-    required" until its worker has got far enough to decide. Asking it
-    straight after a switch -- which is exactly when the answer is needed --
-    is asking too early, which is how a user got told to log out for a change
-    that was waiting on a reboot, twice, before the second attempt happened
-    to catch the daemon in the right state."""
-    try:
-        with open(_under(root, SUPERGFXD_CONF_PATH)) as f:
-            return bool(json.load(f).get("always_reboot"))
-    except (OSError, ValueError):
-        return None
-
-
-def read_gpu_pending_action(timeout=5):
-    """What supergfxd says has to happen next, or None.
-
-    Asked rather than worked out, because the app cannot know it: with
-    ``always_reboot`` set in /etc/supergfxd.conf EVERY mode change becomes a
-    reboot, including the Integrated/Hybrid pair that normally only needs a
-    logout -- and telling a user to log out for a change that is waiting on a
-    reboot sends them round a loop that never completes. The daemon holds
-    that config, so the daemon is asked.
-
-    mode_change_needs_reboot() is still the fallback for when this returns
-    None: it answers the MUX question from the hardware, which is true
-    regardless of what any daemon thinks."""
-    try:
-        result = subprocess.run(["supergfxctl", "-p"],
-                                capture_output=True, text=True, timeout=timeout)
-    except Exception:
-        return None
-    if result.returncode != 0:
-        return None
-    return parse_pending_action(result.stdout)
-
-
-# The one mode that lives on the far side of the hardware MUX. Switching
-# into or out of it is a firmware change; the other two are not.
-MUX_MODE = "AsusMuxDgpu"
-
-GPU_MUX_PATH = ASUS_WMI_DIR + "/gpu_mux_mode"
-
-
-def gpu_mux_is_dgpu(root=None):
-    """True when the MUX has the panel wired to the discrete card.
-
-    0 is discrete and 1 is Optimus in the asus-wmi ABI. None when the node
-    is absent -- a machine with no MUX at all.
-
-    Read from sysfs rather than taken from supergfxd's answer because the
-    two can disagree, and when they do this one is the truth. supergfxd
-    stores a mode in /etc/supergfxd.conf and re-applies it at every login;
-    it accepted Integrated while the MUX was still on the discrete card and
-    then spent every subsequent login trying to tear down the card driving
-    the screen."""
-    try:
-        with open(_under(root, GPU_MUX_PATH)) as f:
-            value = f.read().strip()
-    except OSError:
-        return None
-    if value == "0":
-        return True
-    if value == "1":
-        return False
-    return None
-
-
-def mode_change_needs_reboot(current, target, root=None):
-    """True when the switch crosses the hardware MUX.
-
-    The MUX is flipped by firmware at POST, so nothing a running system can
-    do finishes the change. Measured here: supergfxd wrote gpu_mux_mode and
-    reported success, the node went on reading the old value for the rest of
-    the session, and the machine only came up in Hybrid after a reboot --
-    which is why "log out to finish switching" was wrong advice for it.
-
-    Integrated <-> Hybrid does not cross the MUX. That pair only toggles
-    dgpu_disable, which takes effect without a restart, and G-Helper
-    switches the same pair live on this hardware.
-
-    ``current`` may be None -- supergfxd not answering yet, a switch made
-    before the first sample landed. The MUX node answers instead, and it is
-    the better source anyway: it is the thing being crossed."""
-    if current is not None and current == target:
-        return False
-    if target == MUX_MODE:
-        # Already on the discrete card is the one case that needs nothing.
-        return gpu_mux_is_dgpu(root) is not True
-    # Leaving the MUX mode. Trust the hardware over the daemon's name for it.
-    on_mux = gpu_mux_is_dgpu(root)
-    if on_mux is None:
-        return current == MUX_MODE
-    return on_mux
-
-
-def mode_needs_hybrid_first(current, target, root=None):
-    """True when this switch has to go through Hybrid to be safe.
-
-    Integrated means "power the discrete card down". With the MUX wired to
-    that card, the panel is on it, so carrying the request out kills the
-    display -- and supergfxd stores the mode and re-applies it at every
-    login, so the machine comes up, freezes, and does it again next time.
-    Measured here: two boots lasting 53 and 11 seconds before the machine
-    had to be forced off.
-
-    The MUX has to move to Optimus first, which is a reboot, and only then
-    can the card be switched off. So this pair is two steps and the app has
-    to say so rather than hand the daemon a request that bricks the
-    session."""
-    if target != "Integrated":
-        return False
-    return gpu_mux_is_dgpu(root) is True
+    return _read_cardwire_status(timeout)[1]
 
 
 def _run_reboot(extra_args, timeout=10):
@@ -2399,10 +2222,11 @@ def reboot_system(timeout=10):
 def set_gpu_mode(mode, timeout=10):
     """Switch graphics mode, returning ``(ok, message)``.
 
-    Not run through the helper: supergfxctl talks to supergfxd over the
-    system bus and does its own authorisation."""
+    Cardwire talks to cardwired over the system bus and applies the policy
+    live. Existing processes keep their current GPU access; newly launched
+    processes see the new policy immediately."""
     try:
-        result = subprocess.run(["supergfxctl", "-m", str(mode)],
+        result = subprocess.run(["cardwire", "set", str(mode).lower()],
                                 capture_output=True, text=True, timeout=timeout)
     except Exception as e:
         return False, str(e)
@@ -2420,13 +2244,9 @@ def set_gpu_mode(mode, timeout=10):
 # appears.
 #
 # Why it belongs in this app at all, when it is a kernel bug and not an ASUS
-# knob: the freeze is only reachable in Hybrid and Integrated, because those
-# are the modes where the internal panel hangs off the AMD iGPU. In
-# AsusMuxDgpu the panel is wired to the NVIDIA card, amdgpu reads no PSR
-# capability from it, and the faulty path never runs. So the setting that
-# decides whether the graphics-mode picker on the GPU page is usable is this
-# one -- which makes it this app's business even though nothing about it is
-# ASUS firmware.
+# knob: the faulty path is reachable when the internal panel hangs off the
+# AMD iGPU. Cardwire changes GPU access policy rather than the physical MUX,
+# so this remains relevant in every Cardwire mode.
 #
 # Measured on an ROG Strix G16 G614PR, kernel 7.2.0-1-cachyos: three Hybrid
 # boots, three hard freezes, each preceded by
@@ -2434,7 +2254,7 @@ def set_gpu_mode(mode, timeout=10):
 #     WARNING: .../display/modules/power/power_psr.c:236
 #     at mod_power_set_psr_event+0x2a1/0x310 [amdgpu]
 #
-# and three AsusMuxDgpu boots with no warning and no freeze. The frozen boots
+# and three dGPU-MUX boots with no warning and no freeze. The frozen boots
 # logged "sink PSR ver 3 DPCD caps 0x7a" for eDP-2; the clean ones logged
 # "caps 0x0", which is the panel not being on the AMD side at all. One of the
 # three froze at the GDM greeter, before any user session existed, which is
@@ -3339,7 +3159,7 @@ def detect_capabilities(root=None):
     # nvidia-settings, which is its own package and is missing on plenty of
     # machines that have a working driver.
     caps["nvidia_settings"] = have_cmd("nvidia-settings")
-    caps["supergfxctl"] = have_cmd("supergfxctl")
+    caps["cardwire"] = have_cmd("cardwire")
     caps["rogauracore"] = have_cmd("rogauracore")
     # Which vendor made the chip, for the page and for the gate below.
     caps["cpu_vendor"] = read_cpu_vendor(root=root)
