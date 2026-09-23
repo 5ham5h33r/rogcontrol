@@ -49,6 +49,23 @@ class CardwireTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0],
                          ["cardwire", "set", "integrated"])
 
+    @mock.patch.dict("rogcontrol.hardware.os.environ",
+                     {"XDG_SESSION_TYPE": "x11"}, clear=True)
+    @mock.patch("rogcontrol.hardware.subprocess.run")
+    def test_set_mode_rejects_x11_before_calling_cardwire(self, run):
+        ok, message = hardware.set_gpu_mode("Hybrid")
+
+        self.assertFalse(ok)
+        self.assertEqual(message, hardware.CARDWIRE_WAYLAND_MESSAGE)
+        run.assert_not_called()
+
+    def test_unknown_session_is_left_to_non_gui_dbus_callers(self):
+        self.assertTrue(hardware.cardwire_session_supported({}))
+        self.assertFalse(hardware.cardwire_session_supported(
+            {"XDG_SESSION_TYPE": "X11"}))
+        self.assertTrue(hardware.cardwire_session_supported(
+            {"XDG_SESSION_TYPE": "wayland"}))
+
     def test_mode_choices_hide_unconfigured_manual_mode(self):
         self.assertEqual(
             hardware.gpu_mode_choices("Manual", ["Hybrid", "Manual"]),

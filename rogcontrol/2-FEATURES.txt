@@ -106,6 +106,8 @@ The GPU access mode, with a picker for Cardwire's Integrated, Hybrid and Smart
 policies. Switching is live and never requires logging out. Applications that
 were already running retain their access until restarted. Whatever cardwired
 answers is repeated on the page so a refusal does not disappear with a toast.
+Cardwire itself requires a Wayland session; on X11 the picker stays disabled
+with that reason while every non-Cardwire feature remains available.
 
 Live CPU and GPU temperatures and the speed of the fan cooling each are shown
 on their own pages, refreshed every two seconds. The GPU reads "Idle" while

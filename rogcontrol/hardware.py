@@ -2071,6 +2071,20 @@ def read_panel_od(root=None):
 # -- Graphics mode (Cardwire) ------------------------------------------------
 
 CARDWIRED_SERVICE = "cardwired.service"
+CARDWIRE_WAYLAND_MESSAGE = (
+    "Cardwire mode switching requires a Wayland session; log in with "
+    "Wayland instead of X11")
+
+
+def cardwire_session_supported(env=None):
+    """False only when the current desktop explicitly identifies as X11.
+
+    A missing session type is left usable for non-GUI helpers that talk to
+    cardwired over D-Bus.  The graphical app receives XDG_SESSION_TYPE from
+    the desktop and can give an exact X11 explanation.
+    """
+    env = os.environ if env is None else env
+    return str(env.get("XDG_SESSION_TYPE", "")).lower() != "x11"
 
 
 def read_cardwired_state(timeout=5):
@@ -2262,6 +2276,8 @@ def set_gpu_mode(mode, timeout=10):
     Cardwire talks to cardwired over the system bus and applies the policy
     live. Existing processes keep their current GPU access; newly launched
     processes see the new policy immediately."""
+    if not cardwire_session_supported():
+        return False, CARDWIRE_WAYLAND_MESSAGE
     try:
         result = subprocess.run(["cardwire", "set", str(mode).lower()],
                                 capture_output=True, text=True, timeout=timeout)
@@ -3197,6 +3213,7 @@ def detect_capabilities(root=None):
     # machines that have a working driver.
     caps["nvidia_settings"] = have_cmd("nvidia-settings")
     caps["cardwire"] = have_cmd("cardwire")
+    caps["cardwire_wayland"] = cardwire_session_supported()
     caps["rogauracore"] = have_cmd("rogauracore")
     # Which vendor made the chip, for the page and for the gate below.
     caps["cpu_vendor"] = read_cpu_vendor(root=root)
