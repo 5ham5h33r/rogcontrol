@@ -72,6 +72,19 @@ class CardwireTests(unittest.TestCase):
         self.assertEqual(hardware.nvidia_access_error(),
                          hardware.NO_DRIVER_MESSAGE)
 
+    @mock.patch("rogcontrol.hardware.subprocess.run")
+    @mock.patch("rogcontrol.hardware.dgpu_available")
+    def test_known_access_avoids_a_second_cardwire_check(self, available, run):
+        run.return_value = subprocess.CompletedProcess(
+            ["nvidia-smi"], 0, stdout="55, 42\n", stderr="")
+
+        self.assertEqual(
+            hardware.read_nvidia_stats(check_access=False), (55.0, 42.0))
+
+        available.assert_not_called()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][0], "nvidia-smi")
+
 
 if __name__ == "__main__":
     unittest.main()

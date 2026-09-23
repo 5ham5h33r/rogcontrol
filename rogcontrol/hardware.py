@@ -1050,7 +1050,7 @@ def read_memory(root=None):
 
 # -- GPU ---------------------------------------------------------------------
 
-def read_nvidia_query(fields, timeout=5):
+def read_nvidia_query(fields, timeout=5, check_access=True):
     """The named ``--query-gpu`` fields as floats, in order, each None if the
     card had no number for it.
 
@@ -1061,7 +1061,7 @@ def read_nvidia_query(fields, timeout=5):
     than an exception, since a laptop with the dGPU asleep is a normal state
     and not a reason for the overview to stop updating."""
     blanks = tuple(None for _ in fields)
-    if not dgpu_available(timeout):
+    if check_access and not dgpu_available(timeout):
         return blanks
     try:
         result = subprocess.run(
@@ -1086,10 +1086,10 @@ def read_nvidia_query(fields, timeout=5):
     return tuple(out)
 
 
-def read_nvidia_stats(timeout=5):
+def read_nvidia_stats(timeout=5, check_access=True):
     """(temp_c, power_w) for the NVIDIA card, either of which may be None."""
     return read_nvidia_query(("temperature.gpu", "power.draw"),
-                             timeout=timeout)
+                             timeout=timeout, check_access=check_access)
 
 
 PCI_DEVICES_DIR = "/sys/bus/pci/devices"

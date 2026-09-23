@@ -61,8 +61,26 @@ class QuickAccessPage(Adw.PreferencesPage):
 
     def reload(self):
         """Follow profile switches for the one Quick Access-owned row."""
-        if self.powermizer_row is not None:
+        if (self.powermizer_row is not None
+                and self.powermizer_row.get_visible()):
             self._restore_powermizer_selection()
+
+    def refresh_gpu_capabilities(self, accessible):
+        """Refresh the runtime-only PowerMizer row after a Cardwire switch."""
+        modes = tuple(self.window.caps.get("nvidia_powermizer_modes") or ())
+        if not modes:
+            if self.powermizer_row is not None:
+                self.powermizer_row.set_visible(False)
+            return
+        if self.powermizer_row is None:
+            self._build_powermizer_control()
+        else:
+            self._powermizer_modes = modes
+            self.powermizer_row.set_model(Gtk.StringList.new(
+                [hardware.NVIDIA_POWERMIZER_MODES[mode] for mode in modes]))
+            self._restore_powermizer_selection()
+        self.powermizer_row.set_visible(True)
+        self.powermizer_row.set_sensitive(bool(accessible))
 
     def _move(self, row, destination):
         """Move one existing row without changing its signal handlers."""
