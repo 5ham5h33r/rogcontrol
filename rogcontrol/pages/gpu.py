@@ -178,6 +178,10 @@ NO_DAEMON_SUBTITLE = (
     "systemctl status cardwired."
 )
 
+X11_SUBTITLE = (
+    "Cardwire only supports Wayland. Log out and choose a Wayland desktop "
+    "session to switch GPU access modes.")
+
 # How long after an accepted switch the mode is read back to see whether it
 # actually happened. Cardwire switches policy live, so this only needs to
 # allow its D-Bus state to settle.
@@ -403,6 +407,8 @@ class GpuPage(Gtk.Box):
                 "Cardwire is not installed, so GPU access mode cannot be "
                 "read or changed here. Install Cardwire and enable its "
                 "cardwired service.")
+        elif not self.caps.get("cardwire_wayland", True):
+            self._block_switching(X11_SUBTITLE)
         return group
 
     def _block_switching(self, reason):
@@ -679,6 +685,9 @@ class GpuPage(Gtk.Box):
             self.mode_row.set_subtitle(GPU_MODE_DESCRIPTIONS.get(
                 active, GPU_MODE_SUBTITLE))
         if not self.caps.get("cardwire"):
+            return
+        if not self.caps.get("cardwire_wayland", True):
+            self._block_switching(X11_SUBTITLE)
             return
         # Set both ways round, not just off: cardwired can be restarted under
         # a running window, and a row latched insensitive on one sample would

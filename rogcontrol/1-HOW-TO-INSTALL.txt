@@ -24,6 +24,7 @@ installer detects what is missing and offers to install it:
     NVIDIA driver   experimental Voltage Boost (when the live driver probe supports it;
                     no LACT installation is needed)
     cardwire        live integrated, hybrid and smart GPU access modes
+                    (Wayland sessions only)
     rogauracore     keyboard colours and lighting modes
     libayatana-appindicator   the tray icon
     libnotify       desktop notifications

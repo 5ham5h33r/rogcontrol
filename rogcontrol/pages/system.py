@@ -844,6 +844,14 @@ class SystemPage(Adw.PreferencesPage):
             self.cardwire_row.set_subtitle(CARDWIRE_ABSENT)
             self._cardwire_css("warning")
             return
+        if not self.caps.get("cardwire_wayland", True):
+            self.cardwire_enable_row.set_visible(False)
+            self.cardwire_value.set_text("X11 session")
+            self.cardwire_row.set_subtitle(
+                "Installed, but Cardwire mode switching requires Wayland. "
+                "Log out and choose a Wayland desktop session.")
+            self._cardwire_css("warning")
+            return
         if mode is None:
             # The daemon is not answering. Whether that is because it was
             # never switched on or because it is broken decides both what
