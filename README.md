@@ -58,9 +58,18 @@ Power limit, core/memory clock offsets, a clock ceiling, NVIDIA Dynamic Boost, a
 
 Live GPU access switching between Integrated, Hybrid, and Smart. Cardwire
 applies the policy without logging out; already-running applications retain
-their existing GPU access until restarted.
+their existing GPU access until restarted. Direct NVIDIA controls are parked
+while Integrated or Smart blocks the card. Returning to Hybrid redetects the
+card's real limits and supported controls, then reapplies only the active
+profile's GPU settings.
 
 *Requires: [`cardwire`](https://github.com/OpenGamingCollective/cardwire) and Wayland.*
+
+External-monitor routing still depends on the laptop's physical display
+wiring, the compositor, and Cardwire itself. ROG Control changes Cardwire's
+access policy; it does not move display connectors between GPUs or override a
+mode that Cardwire refuses. The GPU page keeps Cardwire's refusal visible for
+diagnosis instead of hiding it in a short-lived notification.
 
 ### ⌨️ Keyboard
 Brightness and ten lighting modes: Static, Breathing, Pulse, Colour Cycle, Rainbow, Gradient Static, GPU Temp Colour, CPU Temp Colour, Battery Level, and Ambient (follows what's on screen, via the desktop's screen-sharing portal).
