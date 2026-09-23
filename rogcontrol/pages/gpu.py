@@ -75,6 +75,11 @@ CAPABILITY = {"watts": "nvidia",
               "dyn_boost": "nv_dynamic_boost",
               "temp_target": "nv_temp_target"}
 
+NVIDIA_ACCESS_KEYS = {
+    "watts", "clock_limit", "clock_offset", "mem_clock_offset",
+    "voltage_boost",
+}
+
 TITLES = {"watts": "Power limit",
           "clock_limit": "Clock ceiling",
           "dyn_boost": "Dynamic Boost",
@@ -223,6 +228,7 @@ class GpuPage(Gtk.Box):
         self.modes = []
         self.supported_modes = []
         self.current_mode = None
+        self._nvidia_accessible = hardware.dgpu_available()
         self._switching = False
 
         self.rows = {}
@@ -254,6 +260,7 @@ class GpuPage(Gtk.Box):
         status = Adw.PreferencesGroup(
             title="Graphics card",
             description=self.gpu_name or "No NVIDIA card detected")
+        self.status_group = status
         page.add(status)
         # Side by side on one row -- see the CPU page, which pairs the same
         # two readings the same way.
@@ -446,24 +453,25 @@ class GpuPage(Gtk.Box):
         A control for a setting this machine cannot act on does not belong
         on the page at all -- see the CPU page's version of this method for
         the fuller reasoning."""
-        if not self.caps.get("nvidia"):
-            for key in ("watts", "clock_limit"):
-                self.rows[key].set_visible(False)
-            self.temp_cell.set_note("nvidia-smi is not installed.")
+        for key in ("watts", "clock_limit"):
+            self.rows[key].set_visible(bool(self.caps.get("nvidia")))
+        self.temp_cell.set_note(
+            None if self.caps.get("nvidia")
+            else "nvidia-smi is not installed.")
         if not self.caps.get("fan_rpm"):
             # The tachometer is on the asus hwmon, not the card, so it can be
             # missing on a machine whose GPU controls all work.
             self.fan_cell.set_note("No asus hwmon fan reading on this "
                                    "machine.")
-        if not self.caps.get("nvidia_settings"):
-            for key in ("clock_offset", "mem_clock_offset"):
-                self.rows[key].set_visible(False)
-        if not self.caps.get("nvidia_voltage_boost"):
-            self.rows["voltage_boost"].set_visible(False)
-        if not self.caps.get("nv_dynamic_boost"):
-            self.rows["dyn_boost"].set_visible(False)
-        if not self.caps.get("nv_temp_target"):
-            self.rows["temp_target"].set_visible(False)
+        for key in ("clock_offset", "mem_clock_offset"):
+            self.rows[key].set_visible(
+                bool(self.caps.get("nvidia_settings")))
+        self.rows["voltage_boost"].set_visible(
+            bool(self.caps.get("nvidia_voltage_boost")))
+        self.rows["dyn_boost"].set_visible(
+            bool(self.caps.get("nv_dynamic_boost")))
+        self.rows["temp_target"].set_visible(
+            bool(self.caps.get("nv_temp_target")))
         # Both groups can end up with nothing left in them -- a machine
         # with no NVIDIA card and no ASUS power knobs, say -- and an empty
         # titled group left standing says nothing a missing one would not.
@@ -474,6 +482,47 @@ class GpuPage(Gtk.Box):
                   for key in ("clock_limit", "clock_offset", "mem_clock_offset",
                               "voltage_boost")):
             self.clocks_group.set_visible(False)
+        else:
+            self.clocks_group.set_visible(True)
+        if any(self.rows[key].get_visible()
+               for key in ("watts", "dyn_boost", "temp_target")):
+            self.power_group.set_visible(True)
+        self.set_nvidia_accessible(self._nvidia_accessible)
+
+    def set_nvidia_accessible(self, accessible):
+        """Enable direct NVIDIA controls only while Cardwire permits them."""
+        self._nvidia_accessible = bool(accessible)
+        for key in NVIDIA_ACCESS_KEYS:
+            self.rows[key].set_sensitive(self._nvidia_accessible)
+
+    def refresh_runtime_capabilities(self):
+        """Update driver-derived controls without rebuilding the page."""
+        limits = self.caps.get("gpu_limits") or hardware.default_gpu_limits()
+        self.gpu_name = limits.get("name")
+        self.min_w = limits.get("min_w", hardware.GPU_MIN_W_FALLBACK)
+        self.max_w = limits.get("max_w", hardware.GPU_MAX_W_FALLBACK)
+        self.clock_limit_max = limits.get(
+            "clock_limit_max", hardware.CLOCK_LIMIT_FALLBACK_MAX)
+        was_loading = self._loading
+        self._loading = True
+        try:
+            watts = self.rows["watts"]
+            watts.get_adjustment().set_lower(self.min_w)
+            watts.get_adjustment().set_upper(self.max_w)
+            watts.set_value_width_chars()
+            watts.set_tooltip_text(
+                f"The board power the card is allowed to draw. This card "
+                f"reports {self.min_w}–{self.max_w} W.")
+            ceiling = self.rows["clock_limit"]
+            ceiling.get_adjustment().set_upper(self.clock_limit_max)
+            ceiling.set_value_width_chars()
+        finally:
+            self._loading = was_loading
+        self.status_group.set_description(
+            self.gpu_name or "No NVIDIA card detected")
+        self._nvidia_accessible = True
+        self._apply_capability_gating()
+        self.reload()
 
     # -- loading -------------------------------------------------------------
 
@@ -544,22 +593,26 @@ class GpuPage(Gtk.Box):
         nothing next to the nvidia-smi call, and a machine with no NVIDIA
         card still has a fan reading worth showing. VRAM lives on the
         Overview page's GPU section, not here -- see overview.py."""
-        # Asked first, and it decides whether nvidia-smi runs at all: that
-        # call wakes the card to answer it, so polling it every two seconds
-        # would hold the dGPU awake for as long as this page is open. On a
-        # hybrid machine that is both the wrong reading -- the card is never
-        # seen idle -- and a real cost in battery.
-        suspended = hardware.dgpu_is_suspended()
         mode, modes = (hardware.read_cardwire_status()
                        if self.caps.get("cardwire") else (None, []))
+        nvidia_accessible = (
+            mode not in ("Integrated", "Smart")
+            and hardware.nvidia_driver_loaded())
+        # Asked before nvidia-smi, because that call wakes a suspended card.
+        suspended = hardware.dgpu_is_suspended()
         return {
             "dgpu_suspended": suspended,
-            "nvidia": (hardware.read_nvidia_stats()
-                       if self.caps.get("nvidia") and not suspended
+            # The Cardwire access check above is authoritative for this same
+            # sample, so do not spawn a second `cardwire get` inside the
+            # generic guarded query helper.
+            "nvidia": (hardware.read_nvidia_stats(check_access=False)
+                       if self.caps.get("nvidia") and nvidia_accessible
+                       and not suspended
                        else (None, None)),
             "fan_rpm": hardware.read_fan_rpms().get(FAN_CHANNEL),
             "mode": mode,
             "modes": modes,
+            "nvidia_accessible": nvidia_accessible,
         }
 
     def _on_sample(self, result, error):
@@ -590,8 +643,16 @@ class GpuPage(Gtk.Box):
         # being switched to, and a sample landing mid-switch would put it
         # back to the one still running.
         if not self._switching:
+            previous = self.current_mode
             self.current_mode = data.get("mode")
             self._render_modes(data.get("modes") or [], self.current_mode)
+            accessible = bool(data.get("nvidia_accessible"))
+            self.set_nvidia_accessible(accessible)
+            if (self.current_mode != previous
+                    or (self.current_mode == "Hybrid" and accessible
+                        and not self.window._gpu_runtime_ready)):
+                self.window.gpu_mode_changed(
+                    previous, self.current_mode, accessible)
 
     # -- graphics mode -------------------------------------------------------
 
@@ -753,7 +814,9 @@ class GpuPage(Gtk.Box):
     def _pending_values(self):
         """What the controls hold, for the settings this machine can write."""
         return [(key, int(self.rows[key].get_value())) for key in APPLY_ORDER
-                if self.caps.get(CAPABILITY[key])]
+                if self.caps.get(CAPABILITY[key])
+                and (key not in NVIDIA_ACCESS_KEYS
+                     or self._nvidia_accessible)]
 
     def _set_busy(self, busy):
         self._applying = busy
