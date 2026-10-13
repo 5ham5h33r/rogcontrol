@@ -11,9 +11,8 @@ A control panel for ASUS ROG laptops on Linux — without needing `asusctl`. One
 | | |
 |---|---|
 | ![CPU page](docs/screenshots/cpu.png) | ![GPU page](docs/screenshots/gpu.png) |
-| ![Fans page](docs/screenshots/fans.png) | |
-| ![Keyboard lighting](docs/screenshots/v1.0.2.0/keyboard-lighting.png) | ![Keyboard power states and key bindings](docs/screenshots/v1.0.2.0/keyboard-bindings.png) |
-| ![System page](docs/screenshots/system.png) | |
+| ![Fans page](docs/screenshots/fans.png) | ![Keyboard lighting](docs/screenshots/v1.0.2.0/keyboard-lighting.png) |
+| ![Keyboard power states and key bindings](docs/screenshots/v1.0.2.0/keyboard-bindings.png) | ![System page](docs/screenshots/system.png) |
 
 ## Table of contents
 
