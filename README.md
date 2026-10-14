@@ -82,7 +82,7 @@ An eight-point curve per fan, dragged on a graph showing real RPM. "Calibrate fa
 *Requires: nothing extra — reads/writes the embedded controller directly.*
 
 ### ⚡ CPU
-STAPM, fast and slow power limits, temperature target, Curve Optimizer undervolt, turbo boost, and a maximum core clock.
+STAPM, fast and slow power limits, temperature target, Curve Optimizer undervolt, turbo boost, and a maximum core clock. On supported ASUS systems, the CPU tab also exposes `throttle_thermal_policy` as a per-profile dropdown; the selected policy is saved with the profile and restored when it is applied.
 
 *Requires: `ryzenadj` (AMD only) — and on some kernels, the `ryzen_smu` module.*
 
@@ -291,16 +291,16 @@ python3 -m rogcontrol.qt.runtime
 
 ## 📦 Installing
 
-For the 1.0.2.2 release archive, extract `Rog-Control-V1.0.2.2.zip`, then run:
+For the 1.0.2.3 release archive, extract `Rog-Control-V1.0.2.3.zip`, then run:
 
 ```sh
-cd Rog-Control-V1.0.2.2/rogcontrol
+cd Rog-Control-V1.0.2.3/rogcontrol
 bash install.sh
 ```
 
 The archive includes the Qt controllers, QML pages, JavaScript helpers, and
 icons. To preview the extracted application before installing, run
-`python3 -m rogcontrol --demo` from `Rog-Control-V1.0.2.2`.
+`python3 -m rogcontrol --demo` from `Rog-Control-V1.0.2.3`.
 
 To install from a Git checkout:
 
